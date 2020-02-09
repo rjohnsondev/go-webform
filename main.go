@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	_ "github.com/denisenkom/go-mssqldb"
 	"github.com/gomarkdown/markdown"
 	_ "github.com/lib/pq"
 	"github.com/pkg/errors"
@@ -16,7 +17,14 @@ import (
 
 // TODO: add https://github.com/korylprince/go-ad-auth
 
+type DBType int
+const (
+	DbSqlServer = iota
+	DbPostgres = iota
+)
+
 var db *sql.DB
+var dbType DBType
 var formTemplate *template.Template
 
 func formPaths(db *sql.DB) ([]string, error) {
@@ -323,19 +331,36 @@ func formHandler(w http.ResponseWriter, req *http.Request) {
 func main() {
 	var err error
 
+	dbType = DbSqlServer
+
 	// connect to the database
-	connStr := "user=richard password=richard dbname=forms"
-	db, err = sql.Open("postgres", connStr)
-	if err != nil {
-		log.Fatal(err)
-	}
-	// close db gracefully on shutdown
-	defer func() {
-		err := db.Close()
+	if dbType == DbSqlServer {
+		connStr := "sqlserver://sqlserver:gDqDKNnoBhoPzhpk@35.189.5.107"
+		db, err = sql.Open("sqlserver", connStr)
 		if err != nil {
 			log.Fatal(err)
 		}
-	}()
+		// close db gracefully on shutdown
+		defer func() {
+			err := db.Close()
+			if err != nil {
+				log.Fatal(err)
+			}
+		}()
+	} else {
+		connStr := "user=richard password=richard dbname=forms"
+		db, err = sql.Open("postgres", connStr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		// close db gracefully on shutdown
+		defer func() {
+			err := db.Close()
+			if err != nil {
+				log.Fatal(err)
+			}
+		}()
+	}
 
 	// parse the form template
 	formTemplate, err = template.ParseFiles("index.html")

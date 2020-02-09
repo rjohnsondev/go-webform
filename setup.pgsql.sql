@@ -1,15 +1,15 @@
 -- Example setup file for Postgresql
 
 DROP TABLE IF EXISTS test_form;
-DROP TABLE IF EXISTS test_form_colors;
+DROP TABLE IF EXISTS test_form_colours;
 DROP TABLE IF EXISTS test_form_labels;
 DROP TABLE IF EXISTS forms;
 
-CREATE TABLE test_form_colors
+CREATE TABLE test_form_colours
 (
     colour VARCHAR NOT NULL PRIMARY KEY
 );
-INSERT INTO test_form_colors
+INSERT INTO test_form_colours
 VALUES ('Red'),
        ('Green'),
        ('Blue');
@@ -39,7 +39,7 @@ CREATE TABLE test_form
     description      TEXT,
     age              INT         NOT NULL,
     height           INT,
-    colour           VARCHAR     NOT NULL references test_form_colors (colour),
+    colour           VARCHAR     NOT NULL references test_form_colours (colour),
     is_active        BOOLEAN     NOT NULL,
     pickup_scheduled timestamptz NOT NULL
 );
