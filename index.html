@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ .Name }}</title>
+
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
+          integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+
+    <script>
+        // Example starter JavaScript for disabling form submissions if there are invalid fields
+        (function () {
+            'use strict';
+            window.addEventListener('load', function () {
+                // Fetch all the forms we want to apply custom Bootstrap validation styles to
+                const forms = document.getElementsByClassName('needs-validation');
+                // Loop over them and prevent submission
+                const validation = Array.prototype.filter.call(forms, function (form) {
+                    form.addEventListener('submit', function (event) {
+                        if (form.checkValidity() === false) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                        }
+                        form.classList.add('was-validated');
+                    }, false);
+                });
+            }, false);
+            setTimeout(function () {
+                $("#inserted_alert").alert('close')
+            }, 3000)
+        })();
+    </script>
+</head>
+<body>
+
+<body class="bg-light">
+<div class="container">
+    <div class="py-5 text-center">
+        <h2>{{ .Name }}</h2>
+        <p class="lead">{{ .Description }}</p>
+    </div>
+
+    <div class="row">
+        <div class="col order-md-1">
+            {{ if ne .PreviouslyInsertedRecord "" }}
+                <div class="alert alert-success alert-dismissible fade show" id="inserted_alert" role="alert">
+                    Record saved, record id: {{ .PreviouslyInsertedRecord }}
+                    <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+            {{ end }}
+            <form method="POST" enctype="application/x-www-form-urlencoded" class="needs-validation" novalidate>
+
+                {{ range .Fields }}
+                    {{ if ne .SectionHeading "" }}
+                        <h4 class="mb-3">{{.SectionHeading}}</h4>
+                    {{end}}
+                    {{ if or (eq .Type "text") (eq .Type "number") (eq .Type "datetime-local") }}
+                        <div class="mb-3">
+                            <label for="{{ .Name }}">
+                                {{ .Label }}
+                                {{ if .Required }}
+                                    <span class="text-danger">*</span>
+                                {{ end }}
+                            </label>
+                            <input type="{{.Type}}" class="form-control" name="{{.Name}}" id="{{ .Name }}"
+                                   placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}>
+                            <div class="small">
+                                {{.Description}}
+                            </div>
+                        </div>
+                    {{ end }}
+                    {{ if eq .Type "textarea" }}
+                        <div class="mb-3">
+                            <label for="{{ .Name }}">
+                                {{ .Label }}
+                                {{ if .Required }}
+                                    <span class="text-danger">*</span>
+                                {{ end }}
+                            </label>
+                            <textarea class="form-control" name="{{.Name}}" id="{{ .Name }}"
+                                      rows="3"
+                                      placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}></textarea>
+                            <div class="small">
+                                {{.Description }}
+                            </div>
+                        </div>
+                    {{ end }}
+                    {{ if eq .Type "checkbox" }}
+                        <div class="mb-3">
+                            <div class="custom-control custom-checkbox">
+                                <input type="checkbox" class="custom-control-input" name="{{.Name}}" id="{{.Name}}"
+                                       value="1">
+                                <label class="custom-control-label" for="{{.Name}}">{{.Label}}</label>
+                                <div class="small">{{.Description}}</div>
+                            </div>
+                        </div>
+                    {{ end }}
+                    {{ if eq .Type "select" }}
+                        <div class="mb-3">
+                            <label for="{{.Name}}">{{.Label}}</label>
+                            <select class="custom-select" id="{{.Name}}" name="{{.Name}}"
+                                    {{ if .Required }}required{{ end }}>
+                                <option value="">Choose...</option>
+                                {{ range .Options }}
+                                    <option>{{ . }}</option>
+                                {{ end }}
+                            </select>
+                            <div class="small">{{.Description}}</div>
+                        </div>
+
+                    {{ end }}
+                    {{ if .LinebreakAfter }}
+                        <hr class="mb-4">
+                    {{ end }}
+                {{ end }}
+
+                <hr class="mb-4">
+                <button class="btn btn-primary btn-lg btn-block" type="submit">Submit</button>
+            </form>
+        </div>
+    </div>
+
+    <footer class="my-5 pt-5 text-muted text-center text-small">
+        <p class="mb-1">saving to: {{ .TableName }}</p>
+    </footer>
+</div>
+
+
+<script src="https://code.jquery.com/jquery-3.4.1.slim.min.js"
+        integrity="sha384-J6qa4849blE2+poT4WnyKhv5vZF5SrPo0iEjwBvKU7imGFAV0wwj1yYfoRSJoZ+n"
+        crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js"
+        integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo"
+        crossorigin="anonymous"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js"
+        integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6"
+        crossorigin="anonymous"></script>
+</body>
+</html>
