@@ -1,0 +1,33 @@
+# Config file for the sql-form server
+
+[server]
+
+# remember privileged ports require running as a privileged user
+listen = ":8090"
+
+# to generate cert quickly: https://golangcode.com/basic-https-server-with-certificate/
+certificate = "https-server.crt"
+# an empty certificate string results in a http-only server (no TLS)
+# certificate = "https-server.crt"
+key = "https-server.key"
+staticDir = "static"
+template = "index.template.html"
+
+[database]
+# type of database to connect to, used as driver selection
+# dbType = "sqlserver"
+dbType = "postgres"
+
+# connectionString = "sqlserver://sqlserver:gDqDKNnoBhoPzhpk@35.189.5.107?database=forms"
+connectionString = "user=richard password=richard dbname=forms"
+
+[auth]
+# The system will attempt to use SPNEGO authentication through Kerberos if a keytab file is provided
+# if this is an empty string, the system will display an unauthenticated error msg, but record everything
+# against a user called "anonymous"
+#keytab = "testserver.keytab"
+keytab = ""
+cookieName = "gokrb5"
+
+# this key is used to encrypt the auth cookie for basic session authentication:
+sessionKey = "change me for prod"

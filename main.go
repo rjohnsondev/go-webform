@@ -4,22 +4,30 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/BurntSushi/toml"
 	_ "github.com/denisenkom/go-mssqldb"
 	"github.com/gomarkdown/markdown"
+	"github.com/gorilla/sessions"
+	"github.com/jcmturner/goidentity/v6"
+	"github.com/jcmturner/gokrb5/v8/keytab"
+	"github.com/jcmturner/gokrb5/v8/service"
+	"github.com/jcmturner/gokrb5/v8/spnego"
 	_ "github.com/lib/pq"
 	"github.com/pkg/errors"
 	"html/template"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 )
 
-type DBType int
+type DBType string
 
 const (
-	DbSqlServer = iota
-	DbPostgres  = iota
+	DbSqlServer = "sqlserver"
+	DbPostgres  = "postgres"
 )
 
 var db *sql.DB
@@ -62,29 +70,6 @@ type dbCol struct {
 	name    string
 	colType string
 	notNull bool
-}
-
-func formPaths(db *sql.DB) ([]string, error) {
-	rows, err := db.Query("SELECT path FROM forms")
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to get form paths")
-	}
-	out := make([]string, 0)
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, errors.Wrap(err, "unable to load form path")
-		}
-		out = append(out, name)
-	}
-	// Check for errors from iterating over rows.
-	if err := rows.Err(); err != nil {
-		log.Fatal(err)
-	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return nil, errors.Wrap(err, "unable to close form rows")
-	}
-	return out, nil
 }
 
 func loadTableDBCols(ctx context.Context, tableName string) ([]*dbCol, error) {
@@ -288,18 +273,18 @@ func minOffsetToTZOffset(minsStr string) string {
 	tzOffset = tzOffset * -1
 	hrs := tzOffset / 60
 	mins := tzOffset % 60
-	out := fmt.Sprintf("%2d:%2d", hrs, mins)
+	out := fmt.Sprintf("%02d:%02d", hrs, mins)
 	if tzOffset >= 0 {
 		return "+" + out
 	}
 	return "-" + out
 }
 
-func saveFormSubmission(ctx context.Context, frm *Form, req *http.Request) (int, error) {
+func saveFormSubmission(ctx context.Context, username string, frm *Form, req *http.Request) (int, error) {
 	query := generateInsertStatement(frm.TableName, frm.Fields)
 
 	values := make([]interface{}, 0, len(frm.Fields)+1)
-	values = append(values, "username goes here!")
+	values = append(values, username)
 	for _, field := range frm.Fields {
 		var val interface{}
 		var err error
@@ -341,17 +326,29 @@ func saveFormSubmission(ctx context.Context, frm *Form, req *http.Request) (int,
 
 type handler struct {
 	staticHandler http.Handler
+	useSPNEGO     bool
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var err error
 
-	// get the form path by stripping off the initial slash.
+	username := "anonymous"
+	if h.useSPNEGO {
+		creds := goidentity.FromHTTPRequestContext(req)
+		username = creds.UserName()
+		//creds.UserName(),
+		//creds.Domain(),
+		//creds.AuthTime(),
+		//creds.SessionID(),
+	}
+
 	formPath := req.URL.Path
 	if strings.HasPrefix(formPath, "/static/") {
 		http.StripPrefix("/static/", h.staticHandler).ServeHTTP(w, req)
 		return
 	}
+
+	// get the form path by stripping off the initial slash.
 	if len(formPath) > 1 {
 		formPath = formPath[1:]
 	}
@@ -385,7 +382,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 	} else if req.Method == http.MethodPost {
-		insertedId, err := saveFormSubmission(ctx, frm, req)
+		insertedId, err := saveFormSubmission(ctx, username, frm, req)
 		if err != nil {
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -397,52 +394,134 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 }
 
+type SessionMgr struct {
+	skey       []byte
+	store      sessions.Store
+	cookieName string
+}
+
+func NewSessionMgr(sessionKey string, cookieName string) SessionMgr {
+	// Best practice is to load this key from a secure location.
+	skey := []byte(sessionKey)
+	return SessionMgr{
+		skey:       skey,
+		store:      sessions.NewCookieStore(skey),
+		cookieName: cookieName,
+	}
+}
+
+func (smgr SessionMgr) Get(r *http.Request, k string) ([]byte, error) {
+	s, err := smgr.store.Get(r, smgr.cookieName)
+	if err != nil {
+		return nil, err
+	}
+	if s == nil {
+		return nil, errors.New("nil session")
+	}
+	b, ok := s.Values[k].([]byte)
+	if !ok {
+		return nil, fmt.Errorf("could not get bytes held in session at %s", k)
+	}
+	return b, nil
+}
+
+func (smgr SessionMgr) New(w http.ResponseWriter, r *http.Request, k string, v []byte) error {
+	s, err := smgr.store.New(r, smgr.cookieName)
+	if err != nil {
+		return fmt.Errorf("could not get new session from session manager: %v", err)
+	}
+	s.Values[k] = v
+	return s.Save(r, w)
+}
+
+type tomlConfig struct {
+	Server   serverConfig
+	Database databaseConfig
+	Auth     authConfig
+}
+
+type serverConfig struct {
+	Listen      string
+	Certificate string
+	Key         string
+	StaticDir   string
+	Template    string
+}
+
+type databaseConfig struct {
+	DbType           DBType
+	ConnectionString string
+}
+
+type authConfig struct {
+	Keytab     string
+	CookieName string
+	SessionKey string
+}
+
 func main() {
 	var err error
 
-	dbType = DbSqlServer
-
-	// connect to the database
-	if dbType == DbSqlServer {
-		connStr := "sqlserver://sqlserver:gDqDKNnoBhoPzhpk@35.189.5.107?database=forms"
-		db, err = sql.Open("sqlserver", connStr)
-		if err != nil {
-			log.Fatal(err)
-		}
-		// close db gracefully on shutdown
-		defer func() {
-			err := db.Close()
-			if err != nil {
-				log.Fatal(err)
-			}
-		}()
-	} else {
-		connStr := "user=richard password=richard dbname=forms"
-		db, err = sql.Open("postgres", connStr)
-		if err != nil {
-			log.Fatal(err)
-		}
-		// close db gracefully on shutdown
-		defer func() {
-			err := db.Close()
-			if err != nil {
-				log.Fatal(err)
-			}
-		}()
+	tomlData, err := ioutil.ReadFile("config.toml")
+	if err != nil {
+		log.Fatalf("unable to load config file: config.toml: %s\n", err)
 	}
 
+	var conf tomlConfig
+	if _, err := toml.Decode(string(tomlData), &conf); err != nil {
+		log.Fatalf("unable to load config file: %s\n", err)
+	}
+
+	// connect to the database
+	dbType = conf.Database.DbType
+	db, err = sql.Open(string(dbType), conf.Database.ConnectionString)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// close db gracefully on shutdown
+	defer func() {
+		err := db.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
+
 	// parse the form template
-	formTemplate, err = template.ParseFiles("index.template.html")
+	formTemplate, err = template.ParseFiles(conf.Server.Template)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// start listening
-	log.Print("Starting server")
 	h := &handler{
-		staticHandler: http.FileServer(http.Dir("static")),
+		staticHandler: http.FileServer(http.Dir(conf.Server.StaticDir)),
+		useSPNEGO:     conf.Auth.Keytab != "",
 	}
-	err = http.ListenAndServe(":8090", h)
+
+	l := log.New(os.Stderr, "GOKRB5 Service: ", log.Ldate|log.Ltime|log.Lshortfile)
+
+	var sh http.Handler = h
+	if h.useSPNEGO {
+		b, err := ioutil.ReadFile(conf.Auth.Keytab)
+		if err != nil {
+			log.Fatal(err)
+		}
+		kt := keytab.New()
+		if kt.Unmarshal(b) != nil {
+			log.Fatal(err)
+		}
+
+		sh = spnego.SPNEGOKRB5Authenticate(h, kt, service.Logger(l),
+			service.SessionManager(NewSessionMgr(conf.Auth.SessionKey, conf.Auth.CookieName)))
+	}
+
+	if conf.Server.Certificate != "" {
+		log.Print("Starting TLS (https) server, listening on " + conf.Server.Listen)
+		err = http.ListenAndServeTLS(conf.Server.Listen, conf.Server.Certificate, conf.Server.Key, sh)
+	} else {
+		log.Print("Starting (http) server, listening on " + conf.Server.Listen)
+		err = http.ListenAndServe(conf.Server.Listen, sh)
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
