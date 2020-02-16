@@ -15,8 +15,6 @@ import (
 	"strings"
 )
 
-// TODO: add https://github.com/korylprince/go-ad-auth
-
 type DBType int
 
 const (
@@ -27,27 +25,6 @@ const (
 var db *sql.DB
 var dbType DBType
 var formTemplate *template.Template
-
-func formPaths(db *sql.DB) ([]string, error) {
-	rows, err := db.Query("SELECT path FROM forms")
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to get form paths")
-	}
-	out := make([]string, 0)
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, errors.Wrap(err, "unable to load form path")
-		}
-		out = append(out, name)
-	}
-	// Check for errors from iterating over rows.
-	if err := rows.Err(); err != nil {
-		log.Fatal(err)
-	}
-
-	return out, nil
-}
 
 type Form struct {
 	Name                     string
@@ -87,7 +64,31 @@ type dbCol struct {
 	notNull bool
 }
 
+func formPaths(db *sql.DB) ([]string, error) {
+	rows, err := db.Query("SELECT path FROM forms")
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to get form paths")
+	}
+	out := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, errors.Wrap(err, "unable to load form path")
+		}
+		out = append(out, name)
+	}
+	// Check for errors from iterating over rows.
+	if err := rows.Err(); err != nil {
+		log.Fatal(err)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return nil, errors.Wrap(err, "unable to close form rows")
+	}
+	return out, nil
+}
+
 func loadTableDBCols(ctx context.Context, tableName string) ([]*dbCol, error) {
+
 	query := `
 		SELECT f.attname,
 			   pg_catalog.format_type(f.atttypid, f.atttypmod),
@@ -101,6 +102,17 @@ func loadTableDBCols(ctx context.Context, tableName string) ([]*dbCol, error) {
 		  AND f.attnum > $2
 		ORDER BY f.attnum
 		`
+	if dbType == DbSqlServer {
+		query = `
+			SELECT COLUMN_NAME,
+				   DATA_TYPE,
+				   IIF(IS_NULLABLE = 'NO', 1, 0)
+			FROM information_schema.columns
+			WHERE table_name = @p1
+			  AND ORDINAL_POSITION > @p2
+			ORDER BY ordinal_position;
+			`
+	}
 
 	// we skip the top 3 rows to just get to the content (f.attnum > 3)
 	rows, err := db.QueryContext(ctx, query, tableName, 3)
@@ -123,46 +135,100 @@ func loadTableDBCols(ctx context.Context, tableName string) ([]*dbCol, error) {
 	return cols, nil
 }
 
-func loadFieldOptions(ctx context.Context, lookupTable string, lookupTableCol string) ([]string, error) {
-	query := "SELECT " + lookupTableCol + " FROM " + lookupTable
-	rows, err := db.QueryContext(ctx, query)
-	if err != nil {
-		return nil,
-			errors.Wrap(
-				err,
-				fmt.Sprintf(
-					"unable to query lookup %s.%s",
-					lookupTable,
-					lookupTableCol))
-	}
-	fieldOptions := make([]string, 0)
-	for rows.Next() {
-		val := ""
-		err = rows.Scan(&val)
-		if err != nil {
-			return nil, errors.Wrap(err, "unable to read column lookup val")
+func dataTypeToFieldType(dt string) FormFieldType {
+	if dbType == DbPostgres {
+		switch dt {
+		case "character varying":
+			return TextField
+		case "text":
+			return TextArea
+		case "integer":
+			return NumberField
+		case "boolean":
+			return Checkbox
+		case "timestamp with time zone":
+			return DateTime
 		}
-		fieldOptions = append(fieldOptions, val)
+	} else {
+		switch dt {
+		case "varchar":
+			return TextField
+		case "text":
+			return TextArea
+		case "int":
+			return NumberField
+		case "bit":
+			return Checkbox
+		case "datetimeoffset":
+			return DateTime
+		}
 	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return nil, errors.Wrap(err, "unable to close column lookup rows")
+	return TextField
+}
+
+func loadField(ctx context.Context, col *dbCol, tableName string) (*FormField, error) {
+	fieldType := dataTypeToFieldType(col.colType)
+
+	field := &FormField{
+		Name:     col.name,
+		Type:     fieldType,
+		Required: col.notNull,
 	}
-	return fieldOptions, nil
+
+	labelsTable := tableName + "_labels"
+	query := "SELECT label, description, placeholder, options, options_as_radio, section_heading, linebreak_after FROM " +
+		labelsTable + " WHERE column_name = $1"
+	if dbType == DbSqlServer {
+		query = strings.ReplaceAll(query, "$1", "@p1")
+	}
+	options := ""
+	optionsAsRadio := false
+	err :=
+		db.
+			QueryRowContext(ctx, query, col.name).
+			Scan(&field.Label, &field.Description, &field.Placeholder, &options, &optionsAsRadio, &field.SectionHeading, &field.LinebreakAfter)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// we had no label metadata for this field, that's cool, just give it something default
+			field.Label = strings.Title(strings.ReplaceAll(col.name, "_", " "))
+		} else {
+			return nil, errors.Wrap(err, fmt.Sprintf("query error, does the table %s exist?", labelsTable))
+		}
+	}
+
+	if options != "" {
+		if optionsAsRadio {
+			field.Type = Radio
+		} else {
+			field.Type = DropDown
+		}
+		field.Options = strings.Split(options, ",")
+	}
+
+	if field.Description != "" {
+		field.Description = template.HTML(markdown.ToHTML([]byte(field.Description), nil, nil))
+	}
+
+	return field, nil
 }
 
 func loadForm(ctx context.Context, formPath string) (*Form, error) {
 	// let's get the other details for the form
 	form := new(Form)
+	query := "SELECT name, description, table_name FROM forms WHERE path = $1"
+	if dbType == DbSqlServer {
+		query = "SELECT name, description, table_name FROM forms WHERE path = @p1"
+	}
 	err :=
 		db.
-			QueryRowContext(ctx, "SELECT name, description, table_name FROM forms WHERE path = $1", formPath).
+			QueryRowContext(ctx, query, formPath).
 			Scan(&form.Name, &form.Description, &form.TableName)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, errors.Errorf("no form with path %s", formPath)
 		}
-		return nil, errors.Wrap(err, "query error")
+		return nil, errors.Wrap(err, "loadForm query error")
 	}
 
 	dbCols, err := loadTableDBCols(ctx, form.TableName)
@@ -172,59 +238,10 @@ func loadForm(ctx context.Context, formPath string) (*Form, error) {
 
 	fields := make([]*FormField, 0, len(dbCols))
 	for _, col := range dbCols {
-		fieldType := TextField
-		switch col.colType {
-		case "character varying":
-			fieldType = TextField
-		case "text":
-			fieldType = TextArea
-		case "integer":
-			fieldType = NumberField
-		case "boolean":
-			fieldType = Checkbox
-		case "timestamp with time zone":
-			fieldType = DateTime
-		}
-
-		field := &FormField{
-			Name:     col.name,
-			Type:     fieldType,
-			Required: col.notNull,
-		}
-
-		labelsTable := form.TableName + "_labels"
-		query := "SELECT label, description, placeholder, options, options_as_radio, section_heading, linebreak_after FROM " +
-			labelsTable + " WHERE column_name = $1"
-		options := ""
-		optionsAsRadio := false
-		err :=
-			db.
-				QueryRowContext(ctx, query, col.name).
-				Scan(&field.Label, &field.Description, &field.Placeholder, &options, &optionsAsRadio, &field.SectionHeading, &field.LinebreakAfter)
+		field, err := loadField(ctx, col, form.TableName)
 		if err != nil {
-			if err == sql.ErrNoRows {
-				// we had no label metadata for this field, that's cool, just give it something default
-				field.Label = strings.Title(strings.ReplaceAll(col.name, "_", " "))
-			} else {
-				return nil, errors.Wrap(err, fmt.Sprintf("query error, does the table %s exist?", labelsTable))
-			}
+			return nil, err
 		}
-
-		if options != "" {
-			if optionsAsRadio {
-				field.Type = Radio
-			} else {
-				field.Type = DropDown
-			}
-			field.Options = strings.Split(options, ",")
-		}
-
-		if field.Description != "" {
-			field.Description = template.HTML(markdown.ToHTML([]byte(field.Description), nil, nil))
-		}
-
-		// TODO: description should be markdown rendered with https://github.com/gomarkdown/markdown
-
 		fields = append(fields, field)
 	}
 	form.Fields = fields
@@ -232,23 +249,57 @@ func loadForm(ctx context.Context, formPath string) (*Form, error) {
 	return form, nil
 }
 
-func saveFormSubmission(ctx context.Context, frm *Form, req *http.Request) (int, error) {
-	fieldNames := make([]string, 0, len(frm.Fields))
-	for _, field := range frm.Fields {
+func generateInsertStatement(tableName string, fields []*FormField) string {
+	fieldNames := make([]string, 0, len(fields))
+	for _, field := range fields {
 		fieldNames = append(fieldNames, field.Name)
 	}
-	placeholders := make([]string, 0, len(frm.Fields))
-	for i, _ := range frm.Fields {
-		placeholders = append(placeholders, fmt.Sprintf("$%d", i+2))
+	query := ""
+	if dbType == DbPostgres {
+		placeholders := make([]string, 0, len(fields))
+		for i, _ := range fields {
+			placeholders = append(placeholders, fmt.Sprintf("$%d", i+2))
+		}
+		query = fmt.Sprintf(
+			"INSERT INTO %s (created_ts, created_user, %s) VALUES (CURRENT_TIMESTAMP, $1, %s) RETURNING id",
+			tableName,
+			strings.Join(fieldNames, ","),
+			strings.Join(placeholders, ","))
+	} else {
+		placeholders := make([]string, 0, len(fields))
+		for i, _ := range fields {
+			placeholders = append(placeholders, fmt.Sprintf("@p%d", i+2))
+		}
+		query = fmt.Sprintf(
+			"INSERT INTO %s (created_ts, created_user, %s) OUTPUT INSERTED.id VALUES (CURRENT_TIMESTAMP, @p1, %s)",
+			tableName,
+			strings.Join(fieldNames, ","),
+			strings.Join(placeholders, ","))
 	}
-	query := fmt.Sprintf(
-		"INSERT INTO %s (created_ts, created_user, %s) VALUES (CURRENT_TIMESTAMP, $1, %s) RETURNING id",
-		frm.TableName,
-		strings.Join(fieldNames, ","),
-		strings.Join(placeholders, ","))
+	return query
+}
+
+func minOffsetToTZOffset(minsStr string) string {
+	tzOffset, err := strconv.Atoi(minsStr)
+	if err != nil {
+		log.Printf("error parsing time-offset, attempting to save with UTC TZ: %s\n", err)
+		return "+00:00"
+	}
+	tzOffset = tzOffset * -1
+	hrs := tzOffset / 60
+	mins := tzOffset % 60
+	out := fmt.Sprintf("%2d:%2d", hrs, mins)
+	if tzOffset >= 0 {
+		return "+" + out
+	}
+	return "-" + out
+}
+
+func saveFormSubmission(ctx context.Context, frm *Form, req *http.Request) (int, error) {
+	query := generateInsertStatement(frm.TableName, frm.Fields)
 
 	values := make([]interface{}, 0, len(frm.Fields)+1)
-	values = append(values, "")
+	values = append(values, "username goes here!")
 	for _, field := range frm.Fields {
 		var val interface{}
 		var err error
@@ -264,6 +315,13 @@ func saveFormSubmission(ctx context.Context, frm *Form, req *http.Request) (int,
 			}
 		case Checkbox:
 			val = req.FormValue(field.Name) == "1"
+		case DateTime:
+			if !field.Required && req.FormValue(field.Name) == "" {
+				val = nil
+			} else {
+				tzOffset := minOffsetToTZOffset(req.FormValue("timezone-offset"))
+				val = strings.ReplaceAll(req.FormValue(field.Name), "T", " ") + tzOffset
+			}
 		default:
 			if !field.Required && req.FormValue(field.Name) == "" {
 				val = nil
@@ -281,11 +339,19 @@ func saveFormSubmission(ctx context.Context, frm *Form, req *http.Request) (int,
 	return insertId, nil
 }
 
-func formHandler(w http.ResponseWriter, req *http.Request) {
+type handler struct {
+	staticHandler http.Handler
+}
+
+func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var err error
 
 	// get the form path by stripping off the initial slash.
 	formPath := req.URL.Path
+	if strings.HasPrefix(formPath, "/static/") {
+		http.StripPrefix("/static/", h.staticHandler).ServeHTTP(w, req)
+		return
+	}
 	if len(formPath) > 1 {
 		formPath = formPath[1:]
 	}
@@ -295,7 +361,7 @@ func formHandler(w http.ResponseWriter, req *http.Request) {
 
 	var frm *Form
 	if frm, err = loadForm(ctx, formPath); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	insertedCookie, err := req.Cookie("inserted")
@@ -307,7 +373,7 @@ func formHandler(w http.ResponseWriter, req *http.Request) {
 
 	if req.Method == http.MethodGet {
 		// TODO: this is in every request for development purposes, remove when done.
-		formTemplate, err = template.ParseFiles("index.html")
+		formTemplate, err = template.ParseFiles("index.template.html")
 		if err != nil {
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -319,7 +385,6 @@ func formHandler(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 	} else if req.Method == http.MethodPost {
-		// http.Error(w, "Post not yet supported", http.StatusMethodNotAllowed)
 		insertedId, err := saveFormSubmission(ctx, frm, req)
 		if err != nil {
 			log.Println(err)
@@ -336,11 +401,10 @@ func main() {
 	var err error
 
 	dbType = DbSqlServer
-	dbType = DbPostgres
 
 	// connect to the database
 	if dbType == DbSqlServer {
-		connStr := "sqlserver://sqlserver:gDqDKNnoBhoPzhpk@35.189.5.107"
+		connStr := "sqlserver://sqlserver:gDqDKNnoBhoPzhpk@35.189.5.107?database=forms"
 		db, err = sql.Open("sqlserver", connStr)
 		if err != nil {
 			log.Fatal(err)
@@ -368,20 +432,17 @@ func main() {
 	}
 
 	// parse the form template
-	formTemplate, err = template.ParseFiles("index.html")
-	//if err != nil {
-	//	log.Fatal(err)
-	//}
-
-	// add the paths to the web server
-	paths, err := formPaths(db)
-	for _, p := range paths {
-		http.HandleFunc("/"+p, formHandler)
+	formTemplate, err = template.ParseFiles("index.template.html")
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	// start listening
 	log.Print("Starting server")
-	err = http.ListenAndServe(":8090", nil)
+	h := &handler{
+		staticHandler: http.FileServer(http.Dir("static")),
+	}
+	err = http.ListenAndServe(":8090", h)
 	if err != nil {
 		log.Fatal(err)
 	}
