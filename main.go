@@ -18,9 +18,10 @@ import (
 // TODO: add https://github.com/korylprince/go-ad-auth
 
 type DBType int
+
 const (
 	DbSqlServer = iota
-	DbPostgres = iota
+	DbPostgres  = iota
 )
 
 var db *sql.DB
@@ -76,30 +77,24 @@ const (
 	TextArea                  = "textarea"
 	Checkbox                  = "checkbox"
 	DropDown                  = "select"
+	Radio                     = "radio"
 	DateTime                  = "datetime-local"
 )
 
 type dbCol struct {
-	name           string
-	colType        string
-	notNull        bool
-	lookupTable    string
-	lookupTableCol string
+	name    string
+	colType string
+	notNull bool
 }
 
 func loadTableDBCols(ctx context.Context, tableName string) ([]*dbCol, error) {
 	query := `
 		SELECT f.attname,
 			   pg_catalog.format_type(f.atttypid, f.atttypmod),
-       		   f.attnotnull,
-			   COALESCE(g.relname, ''),
-			   COALESCE(f2.attname, '')
+       		   f.attnotnull
 		FROM pg_attribute f
 				 JOIN pg_class c ON c.oid = f.attrelid
 				 LEFT JOIN pg_namespace n ON n.oid = c.relnamespace
-				 LEFT JOIN pg_constraint p ON p.conrelid = c.oid AND f.attnum = ANY (p.conkey)
-				 LEFT JOIN pg_class AS g ON p.confrelid = g.oid
-				 LEFT JOIN pg_attribute AS f2 ON p.confrelid = f2.attrelid and f2.attnum > 0
 		WHERE c.relkind = 'r'::char
 		  AND n.nspname = 'public'
 		  AND c.relname = $1
@@ -116,7 +111,7 @@ func loadTableDBCols(ctx context.Context, tableName string) ([]*dbCol, error) {
 	cols := make([]*dbCol, 0)
 	for rows.Next() {
 		col := dbCol{}
-		err = rows.Scan(&col.name, &col.colType, &col.notNull, &col.lookupTable, &col.lookupTableCol)
+		err = rows.Scan(&col.name, &col.colType, &col.notNull)
 		if err != nil {
 			return nil, errors.Wrap(err, "unable to read table column metadata")
 		}
@@ -191,29 +186,21 @@ func loadForm(ctx context.Context, formPath string) (*Form, error) {
 			fieldType = DateTime
 		}
 
-		fieldOptions := make([]string, 0)
-		if col.lookupTable != "" {
-			fieldType = DropDown
-			fieldOptions, err = loadFieldOptions(ctx, col.lookupTable, col.lookupTableCol)
-			if err != nil {
-				return nil, errors.Wrap(err, fmt.Sprintf("unable to get lookup for table %s", col.name))
-			}
-		}
-
 		field := &FormField{
 			Name:     col.name,
 			Type:     fieldType,
-			Options:  fieldOptions,
 			Required: col.notNull,
 		}
 
 		labelsTable := form.TableName + "_labels"
-		query := "SELECT label, description, placeholder, section_heading, linebreak_after FROM " +
+		query := "SELECT label, description, placeholder, options, options_as_radio, section_heading, linebreak_after FROM " +
 			labelsTable + " WHERE column_name = $1"
+		options := ""
+		optionsAsRadio := false
 		err :=
 			db.
 				QueryRowContext(ctx, query, col.name).
-				Scan(&field.Label, &field.Description, &field.Placeholder, &field.SectionHeading, &field.LinebreakAfter)
+				Scan(&field.Label, &field.Description, &field.Placeholder, &options, &optionsAsRadio, &field.SectionHeading, &field.LinebreakAfter)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				// we had no label metadata for this field, that's cool, just give it something default
@@ -221,6 +208,15 @@ func loadForm(ctx context.Context, formPath string) (*Form, error) {
 			} else {
 				return nil, errors.Wrap(err, fmt.Sprintf("query error, does the table %s exist?", labelsTable))
 			}
+		}
+
+		if options != "" {
+			if optionsAsRadio {
+				field.Type = Radio
+			} else {
+				field.Type = DropDown
+			}
+			field.Options = strings.Split(options, ",")
 		}
 
 		if field.Description != "" {
@@ -258,14 +254,22 @@ func saveFormSubmission(ctx context.Context, frm *Form, req *http.Request) (int,
 		var err error
 		switch field.Type {
 		case NumberField:
-			val, err = strconv.Atoi(req.FormValue(field.Name))
-			if err != nil {
-				return 0, errors.Wrap(err, fmt.Sprintf("unable to parse as int %s: %s", field.Name, req.FormValue(field.Name)))
+			if !field.Required && req.FormValue(field.Name) == "" {
+				val = nil
+			} else {
+				val, err = strconv.Atoi(req.FormValue(field.Name))
+				if err != nil {
+					return 0, errors.Wrap(err, fmt.Sprintf("unable to parse as int %s: %s", field.Name, req.FormValue(field.Name)))
+				}
 			}
 		case Checkbox:
 			val = req.FormValue(field.Name) == "1"
 		default:
-			val = req.FormValue(field.Name)
+			if !field.Required && req.FormValue(field.Name) == "" {
+				val = nil
+			} else {
+				val = req.FormValue(field.Name)
+			}
 		}
 		values = append(values, val)
 	}
@@ -332,6 +336,7 @@ func main() {
 	var err error
 
 	dbType = DbSqlServer
+	dbType = DbPostgres
 
 	// connect to the database
 	if dbType == DbSqlServer {

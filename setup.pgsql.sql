@@ -5,29 +5,24 @@ DROP TABLE IF EXISTS test_form_colours;
 DROP TABLE IF EXISTS test_form_labels;
 DROP TABLE IF EXISTS forms;
 
-CREATE TABLE test_form_colours
-(
-    colour VARCHAR NOT NULL PRIMARY KEY
-);
-INSERT INTO test_form_colours
-VALUES ('Red'),
-       ('Green'),
-       ('Blue');
-
 CREATE TABLE test_form_labels
 (
-    column_name     TEXT    NOT NULL PRIMARY KEY,
-    label           TEXT    NOT NULL,
-    description     TEXT    NOT NULL,
-    placeholder     TEXT NOT NULL,
-    section_heading TEXT NOT NULL,
-    linebreak_after BOOLEAN NOT NULL
+    column_name      TEXT    NOT NULL PRIMARY KEY,
+    label            TEXT    NOT NULL,
+    description      TEXT    NOT NULL,
+    placeholder      TEXT    NOT NULL,
+    section_heading  TEXT    NOT NULL,
+    options          TEXT    NOT NULL,
+    options_as_radio BOOLEAN NOT NULL,
+    linebreak_after  BOOLEAN NOT NULL
 );
 
 INSERT INTO test_form_labels
-VALUES ('name', 'Customer Name', '', '', '', false),
-       ('description', 'Description', 'Some extra *details* about __the customer__', '', '', true),
-       ('age', 'Age of the customer', '', '', 'Customer Details', false);
+VALUES ('name', 'Customer Name', '', '', '', '', false, false),
+       ('description', 'Description', 'Some extra *details* about __the customer__', '', '', '', true,
+        true),
+       ('age', 'Age of the customer', '', '', 'Customer Details', '', false, false),
+       ('colour', 'Fav colour', '', '', '', 'Red,Green,Blue', true, false);
 
 CREATE TABLE test_form
 (
@@ -39,7 +34,7 @@ CREATE TABLE test_form
     description      TEXT,
     age              INT         NOT NULL,
     height           INT,
-    colour           VARCHAR     NOT NULL references test_form_colours (colour),
+    colour           VARCHAR     NOT NULL,
     is_active        BOOLEAN     NOT NULL,
     pickup_scheduled timestamptz NOT NULL
 );
