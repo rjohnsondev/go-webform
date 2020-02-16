@@ -134,7 +134,7 @@ https://social.technet.microsoft.com/wiki/contents/articles/36470.active-directo
 
     **NOTE:** A `CNAME` (or alias) is _not_ adequate, and will result in auth errors.
 
-    For this example we'll use: `forms.tsa.local`
+    For this example we'll use: `webforms.tsa.local`
 
 2. Create an AD user for the service.
 
