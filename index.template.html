@@ -58,7 +58,7 @@
                     {{ if ne .SectionHeading "" }}
                         <h4 class="mb-3">{{.SectionHeading}}</h4>
                     {{end}}
-                    {{ if or (eq .Type "text") (eq .Type "number") (eq .Type "datetime-local") }}
+                    {{ if or (eq .FormFieldType "text") (eq .FormFieldType "number") (eq .FormFieldType "datetime-local") }}
                         <div class="mb-3">
                             <label for="{{ .Name }}">
                                 {{ .Label }}
@@ -66,14 +66,14 @@
                                     <span class="text-danger">*</span>
                                 {{ end }}
                             </label>
-                            <input type="{{.Type}}" class="form-control" name="{{.Name}}" id="{{ .Name }}"
+                            <input type="{{.FormFieldType}}" class="form-control" name="{{.Name}}" id="{{ .Name }}"
                                    placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}>
                             <div class="small">
                                 {{.Description}}
                             </div>
                         </div>
                     {{ end }}
-                    {{ if eq .Type "textarea" }}
+                    {{ if eq .FormFieldType "textarea" }}
                         <div class="mb-3">
                             <label for="{{ .Name }}">
                                 {{ .Label }}
@@ -89,7 +89,7 @@
                             </div>
                         </div>
                     {{ end }}
-                    {{ if eq .Type "checkbox" }}
+                    {{ if eq .FormFieldType "checkbox" }}
                         <div class="mb-3">
                             <div class="custom-control custom-checkbox">
                                 <input type="checkbox" class="custom-control-input" name="{{.Name}}" id="{{.Name}}"
@@ -99,7 +99,7 @@
                             </div>
                         </div>
                     {{ end }}
-                    {{ if eq .Type "select" }}
+                    {{ if eq .FormFieldType "select" }}
                         <div class="mb-3">
                             <label for="{{.Name}}">{{.Label}}</label>
                             <select class="custom-select" id="{{.Name}}" name="{{.Name}}"
@@ -113,7 +113,7 @@
                         </div>
 
                     {{ end }}
-                    {{ if eq .Type "radio" }}
+                    {{ if eq .FormFieldType "radio" }}
                         {{$field := .}}
                         <div class="mb-3">
                             <label class="d-block">{{.Label}} <span class="text-danger">*</span></label>

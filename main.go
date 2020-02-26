@@ -14,6 +14,7 @@ import (
 	"github.com/jcmturner/gokrb5/v8/spnego"
 	_ "github.com/lib/pq"
 	"github.com/pkg/errors"
+	"github.com/shopspring/decimal"
 	"html/template"
 	"io/ioutil"
 	"log"
@@ -44,11 +45,13 @@ type Form struct {
 
 type FormField struct {
 	Name           string
-	Type           FormFieldType
+	FormFieldType  FormFieldType
+	DBFieldType    DBFieldType
 	Options        []string
 	Required       bool
 	Label          string
 	Description    template.HTML
+	Regex          template.JSStr
 	Placeholder    string
 	SectionHeading string
 	LinebreakAfter bool
@@ -57,13 +60,26 @@ type FormField struct {
 type FormFieldType string
 
 const (
-	TextField   FormFieldType = "text"
-	NumberField               = "number"
-	TextArea                  = "textarea"
-	Checkbox                  = "checkbox"
-	DropDown                  = "select"
-	Radio                     = "radio"
-	DateTime                  = "datetime-local"
+	FormTextField   FormFieldType = "text"
+	FormNumberField               = "number"
+	FormTextArea                  = "textarea"
+	FormCheckbox                  = "checkbox"
+	FormDropDown                  = "select"
+	FormRadio                     = "radio"
+	FormDateTime                  = "datetime-local"
+)
+
+type DBFieldType string
+
+const (
+	DBText      DBFieldType = "text"
+	DBVarChar               = "varchar"
+	DBInteger               = "integer"
+	DBDecimal               = "decimal"
+	DBMoney                 = "money"
+	DBFloat                 = "float"
+	DBBoolean               = "boolean"
+	DBTimeStamp             = "timestamp"
 )
 
 type dbCol struct {
@@ -120,44 +136,51 @@ func loadTableDBCols(ctx context.Context, tableName string) ([]*dbCol, error) {
 	return cols, nil
 }
 
-func dataTypeToFieldType(dt string) FormFieldType {
+func dataTypeToFieldType(dt string) (FormFieldType, DBFieldType) {
 	if dbType == DbPostgres {
 		switch dt {
 		case "character varying":
-			return TextField
+			return FormTextField, DBVarChar
 		case "text":
-			return TextArea
+			return FormTextArea, DBText
 		case "integer":
-			return NumberField
+			return FormNumberField, DBInteger
+		case "numeric":
+			return FormNumberField, DBDecimal
+		case "money":
+			return FormNumberField, DBMoney
+		case "double precision":
+			return FormNumberField, DBFloat
 		case "boolean":
-			return Checkbox
+			return FormCheckbox, DBBoolean
 		case "timestamp with time zone":
-			return DateTime
+			return FormDateTime, DBTimeStamp
 		}
 	} else {
 		switch dt {
 		case "varchar":
-			return TextField
+			return FormTextField, DBVarChar
 		case "text":
-			return TextArea
+			return FormTextArea, DBText
 		case "int":
-			return NumberField
+			return FormNumberField, DBInteger
 		case "bit":
-			return Checkbox
+			return FormCheckbox, DBBoolean
 		case "datetimeoffset":
-			return DateTime
+			return FormDateTime, DBTimeStamp
 		}
 	}
-	return TextField
+	return FormTextField, DBVarChar
 }
 
 func loadField(ctx context.Context, col *dbCol, tableName string) (*FormField, error) {
-	fieldType := dataTypeToFieldType(col.colType)
+	fieldType, dbFieldType := dataTypeToFieldType(col.colType)
 
 	field := &FormField{
-		Name:     col.name,
-		Type:     fieldType,
-		Required: col.notNull,
+		Name:          col.name,
+		FormFieldType: fieldType,
+		DBFieldType:   dbFieldType,
+		Required:      col.notNull,
 	}
 
 	labelsTable := tableName + "_labels"
@@ -183,9 +206,9 @@ func loadField(ctx context.Context, col *dbCol, tableName string) (*FormField, e
 
 	if options != "" {
 		if optionsAsRadio {
-			field.Type = Radio
+			field.FormFieldType = FormRadio
 		} else {
-			field.Type = DropDown
+			field.FormFieldType = FormDropDown
 		}
 		field.Options = strings.Split(options, ",")
 	}
@@ -288,8 +311,8 @@ func saveFormSubmission(ctx context.Context, username string, frm *Form, req *ht
 	for _, field := range frm.Fields {
 		var val interface{}
 		var err error
-		switch field.Type {
-		case NumberField:
+		switch field.DBFieldType {
+		case DBInteger:
 			if !field.Required && req.FormValue(field.Name) == "" {
 				val = nil
 			} else {
@@ -298,9 +321,37 @@ func saveFormSubmission(ctx context.Context, username string, frm *Form, req *ht
 					return 0, errors.Wrap(err, fmt.Sprintf("unable to parse as int %s: %s", field.Name, req.FormValue(field.Name)))
 				}
 			}
-		case Checkbox:
+		case DBDecimal:
+			if !field.Required && req.FormValue(field.Name) == "" {
+				val = nil
+			} else {
+				val, err = decimal.NewFromString(req.FormValue(field.Name))
+				if err != nil {
+					return 0, errors.Wrap(err, fmt.Sprintf("unable to parse as decimal %s: %s", field.Name, req.FormValue(field.Name)))
+				}
+			}
+		case DBMoney:
+			if !field.Required && req.FormValue(field.Name) == "" {
+				val = nil
+			} else {
+				val, err = decimal.NewFromString(req.FormValue(field.Name))
+				if err != nil {
+					return 0, errors.Wrap(err, fmt.Sprintf("unable to parse as money %s: %s", field.Name, req.FormValue(field.Name)))
+				}
+			}
+		case DBFloat:
+			if !field.Required && req.FormValue(field.Name) == "" {
+				val = nil
+			} else {
+				val, err = strconv.ParseFloat(req.FormValue(field.Name), 64)
+				if err != nil {
+					return 0, errors.Wrap(err, fmt.Sprintf("unable to parse as float %s: %s", field.Name, req.FormValue(field.Name)))
+				}
+			}
+		case DBBoolean:
+			// bools can't be not null
 			val = req.FormValue(field.Name) == "1"
-		case DateTime:
+		case DBTimeStamp:
 			if !field.Required && req.FormValue(field.Name) == "" {
 				val = nil
 			} else {

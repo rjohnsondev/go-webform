@@ -11,4 +11,5 @@ require (
 	github.com/jcmturner/gokrb5/v8 v8.1.1
 	github.com/lib/pq v1.3.0
 	github.com/pkg/errors v0.9.1
+	github.com/shopspring/decimal v0.0.0-20200226005030-a08b92da27ed
 )

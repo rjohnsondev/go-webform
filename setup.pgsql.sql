@@ -14,15 +14,16 @@ CREATE TABLE test_form_labels
     section_heading  TEXT    NOT NULL,
     options          TEXT    NOT NULL,
     options_as_radio BOOLEAN NOT NULL,
+    regex            TEXT    NOT NULL,
     linebreak_after  BOOLEAN NOT NULL
 );
 
 INSERT INTO test_form_labels
-VALUES ('name', 'Customer Name', '', '', '', '', false, false),
-       ('description', 'Description', 'Some extra *details* about __the customer__', '', '', '', true,
+VALUES ('name', 'Customer Name', '', '', '', '', false, '', false),
+       ('description', 'Description', 'Some extra *details* about __the customer__', '', '', '', true, '',
         true),
-       ('age', 'Age of the customer', '', '', 'Customer Details', '', false, false),
-       ('colour', 'Fav colour', '', '', '', 'Red,Green,Blue', true, false);
+       ('age', 'Age of the customer', '', '', 'Customer Details', '', false, '', false),
+       ('colour', 'Fav colour', '', '', '', 'Red,Green,Blue', true, '', false);
 
 CREATE TABLE test_form
 (
@@ -34,7 +35,11 @@ CREATE TABLE test_form
     description      TEXT,
     age              INT         NOT NULL,
     height           INT,
+    salesValue       MONEY,
+    fixed            DECIMAL,
+    fractionComplete FLOAT,
     colour           VARCHAR     NOT NULL,
+    -- Bools can't be not null
     is_active        BOOLEAN     NOT NULL,
     pickup_scheduled timestamptz NOT NULL
 );
