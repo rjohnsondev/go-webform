@@ -7,23 +7,25 @@ DROP TABLE IF EXISTS forms;
 
 CREATE TABLE test_form_labels
 (
-    column_name      TEXT    NOT NULL PRIMARY KEY,
-    label            TEXT    NOT NULL,
-    description      TEXT    NOT NULL,
-    placeholder      TEXT    NOT NULL,
-    section_heading  TEXT    NOT NULL,
-    options          TEXT    NOT NULL,
-    options_as_radio BOOLEAN NOT NULL,
-    regex            TEXT    NOT NULL,
-    linebreak_after  BOOLEAN NOT NULL
+    column_name        TEXT    NOT NULL PRIMARY KEY,
+    label              TEXT    NOT NULL,
+    description        TEXT    NOT NULL,
+    placeholder        TEXT    NOT NULL,
+    section_heading    TEXT    NOT NULL,
+    options            TEXT    NOT NULL,
+    options_as_radio   BOOLEAN NOT NULL,
+    -- Regex only works for some types
+    regex              TEXT    NOT NULL,
+    linebreak_after    BOOLEAN NOT NULL,
+    include_in_summary BOOLEAN NOT NULL
 );
 
 INSERT INTO test_form_labels
-VALUES ('name', 'Customer Name', '', '', '', '', false, '', false),
+VALUES ('name', 'Customer Name', '', '', '', '', false, '', false, true),
        ('description', 'Description', 'Some extra *details* about __the customer__', '', '', '', true, '',
-        true),
-       ('age', 'Age of the customer', '', '', 'Customer Details', '', false, '', false),
-       ('colour', 'Fav colour', '', '', '', 'Red,Green,Blue', true, '', false);
+        true, false),
+       ('age', 'Age of the customer', '', '', 'Customer Details', '', false, '', false, true),
+       ('colour', 'Fav colour', '', '', '', 'Red,Green,Blue', true, '', false, true);
 
 CREATE TABLE test_form
 (
@@ -41,7 +43,8 @@ CREATE TABLE test_form
     colour           VARCHAR     NOT NULL,
     -- Bools can't be not null
     is_active        BOOLEAN     NOT NULL,
-    pickup_scheduled timestamptz NOT NULL
+    pickup_scheduled timestamptz NOT NULL,
+    dob              date        NOT NULL
 );
 
 
@@ -51,9 +54,10 @@ CREATE TABLE forms
     name        TEXT   NOT NULL,
     description TEXT   NOT NULL,
     path        TEXT   NOT NULL UNIQUE,
-    table_name  TEXT   NOT NULL
+    table_name  TEXT   NOT NULL,
+    admins      TEXT   NOT NULL
 );
 
-INSERT INTO forms (name, description, path, table_name)
-VALUES ('Test Form', 'This is a test form', 'test_form', 'test_form');
+INSERT INTO forms (name, description, path, table_name, admins)
+VALUES ('Test Form', 'This is a test form', 'test_form', 'test_form', '');
 

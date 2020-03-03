@@ -22,6 +22,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type DBType string
@@ -34,6 +35,7 @@ const (
 var db *sql.DB
 var dbType DBType
 var formTemplate *template.Template
+var listTemplate *template.Template
 
 type Form struct {
 	Name                     string
@@ -44,42 +46,33 @@ type Form struct {
 }
 
 type FormField struct {
-	Name           string
-	FormFieldType  FormFieldType
-	DBFieldType    DBFieldType
-	Options        []string
-	Required       bool
-	Label          string
-	Description    template.HTML
-	Regex          template.JSStr
-	Placeholder    string
-	SectionHeading string
-	LinebreakAfter bool
+	Name             string
+	FieldType        FormFieldType
+	Options          []string
+	Required         bool
+	Label            string
+	Description      template.HTML
+	Regex            template.JSStr
+	Placeholder      string
+	SectionHeading   string
+	LinebreakAfter   bool
+	IncludeInSummary bool
 }
 
 type FormFieldType string
 
 const (
-	FormTextField   FormFieldType = "text"
-	FormNumberField               = "number"
-	FormTextArea                  = "textarea"
-	FormCheckbox                  = "checkbox"
-	FormDropDown                  = "select"
-	FormRadio                     = "radio"
-	FormDateTime                  = "datetime-local"
-)
-
-type DBFieldType string
-
-const (
-	DBText      DBFieldType = "text"
-	DBVarChar               = "varchar"
-	DBInteger               = "integer"
-	DBDecimal               = "decimal"
-	DBMoney                 = "money"
-	DBFloat                 = "float"
-	DBBoolean               = "boolean"
-	DBTimeStamp             = "timestamp"
+	FormText      FormFieldType = "text"
+	FormVarChar                 = "varchar"
+	FormInteger                 = "integer"
+	FormDecimal                 = "decimal"
+	FormMoney                   = "money"
+	FormFloat                   = "float"
+	FormBoolean                 = "boolean"
+	FormSelect                  = "select"
+	FormRadio                   = "radio"
+	FormTimeStamp               = "timestamp"
+	FormDate                    = "date"
 )
 
 type dbCol struct {
@@ -136,56 +129,66 @@ func loadTableDBCols(ctx context.Context, tableName string) ([]*dbCol, error) {
 	return cols, nil
 }
 
-func dataTypeToFieldType(dt string) (FormFieldType, DBFieldType) {
+func dataTypeToFieldType(dt string) FormFieldType {
 	if dbType == DbPostgres {
 		switch dt {
 		case "character varying":
-			return FormTextField, DBVarChar
+			return FormVarChar
 		case "text":
-			return FormTextArea, DBText
+			return FormText
 		case "integer":
-			return FormNumberField, DBInteger
+			return FormInteger
 		case "numeric":
-			return FormNumberField, DBDecimal
+			return FormDecimal
 		case "money":
-			return FormNumberField, DBMoney
+			return FormMoney
 		case "double precision":
-			return FormNumberField, DBFloat
+			return FormFloat
 		case "boolean":
-			return FormCheckbox, DBBoolean
+			return FormBoolean
 		case "timestamp with time zone":
-			return FormDateTime, DBTimeStamp
+			return FormTimeStamp
+		case "date":
+			return FormDate
 		}
 	} else {
 		switch dt {
 		case "varchar":
-			return FormTextField, DBVarChar
+			return FormVarChar
 		case "text":
-			return FormTextArea, DBText
+			return FormText
 		case "int":
-			return FormNumberField, DBInteger
+			return FormInteger
 		case "bit":
-			return FormCheckbox, DBBoolean
+			return FormBoolean
 		case "datetimeoffset":
-			return FormDateTime, DBTimeStamp
+			return FormTimeStamp
 		}
 	}
-	return FormTextField, DBVarChar
+	return FormVarChar
 }
 
 func loadField(ctx context.Context, col *dbCol, tableName string) (*FormField, error) {
-	fieldType, dbFieldType := dataTypeToFieldType(col.colType)
+	fieldType := dataTypeToFieldType(col.colType)
 
 	field := &FormField{
-		Name:          col.name,
-		FormFieldType: fieldType,
-		DBFieldType:   dbFieldType,
-		Required:      col.notNull,
+		Name:      col.name,
+		FieldType: fieldType,
+		Required:  col.notNull,
 	}
 
 	labelsTable := tableName + "_labels"
-	query := "SELECT label, description, placeholder, options, options_as_radio, section_heading, linebreak_after FROM " +
-		labelsTable + " WHERE column_name = $1"
+	query := `
+		SELECT
+			label,
+			description,
+			placeholder,
+			options,
+			options_as_radio,
+			section_heading,
+			linebreak_after,
+			include_in_summary
+		FROM ` + labelsTable + " WHERE column_name = $1"
 	if dbType == DbSqlServer {
 		query = strings.ReplaceAll(query, "$1", "@p1")
 	}
@@ -194,7 +197,15 @@ func loadField(ctx context.Context, col *dbCol, tableName string) (*FormField, e
 	err :=
 		db.
 			QueryRowContext(ctx, query, col.name).
-			Scan(&field.Label, &field.Description, &field.Placeholder, &options, &optionsAsRadio, &field.SectionHeading, &field.LinebreakAfter)
+			Scan(
+				&field.Label,
+				&field.Description,
+				&field.Placeholder,
+				&options,
+				&optionsAsRadio,
+				&field.SectionHeading,
+				&field.LinebreakAfter,
+				&field.IncludeInSummary)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// we had no label metadata for this field, that's cool, just give it something default
@@ -206,9 +217,9 @@ func loadField(ctx context.Context, col *dbCol, tableName string) (*FormField, e
 
 	if options != "" {
 		if optionsAsRadio {
-			field.FormFieldType = FormRadio
+			field.FieldType = FormRadio
 		} else {
-			field.FormFieldType = FormDropDown
+			field.FieldType = FormSelect
 		}
 		field.Options = strings.Split(options, ",")
 	}
@@ -255,6 +266,55 @@ func loadForm(ctx context.Context, formPath string) (*Form, error) {
 	form.Fields = fields
 
 	return form, nil
+}
+
+func loadFormList(ctx context.Context, user string, frm *Form) ([]map[string]string, error) {
+	cols := make([]string, 0, len(frm.Fields))
+	vals := make([]interface{}, 0, len(cols))
+	for _, fld := range frm.Fields {
+		if fld.IncludeInSummary {
+			cols = append(cols, fld.Name)
+			val := emptyFormVal(fld.FieldType)
+			vals = append(vals, &val)
+		}
+	}
+
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE created_user = ", strings.Join(cols, ","), frm.TableName)
+	if dbType == DbSqlServer {
+		query += "@p1 ORDER BY created_ts DESC"
+	} else {
+		query += "$1 ORDER BY created_ts DESC"
+	}
+	rows, err := db.QueryContext(ctx, query, user)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return make([]map[string]string, 0), nil
+		}
+		return nil, errors.Wrap(err, "loadFormList query error")
+	}
+
+	out := make([]map[string]string, 0)
+	for rows.Next() {
+		err = rows.Scan(vals...)
+		if err != nil {
+			return nil, errors.Wrap(err, "unable to read table values")
+		}
+		outRow := make(map[string]string)
+		i := 0
+		for _, fld := range frm.Fields {
+			if fld.IncludeInSummary {
+				outRow[fld.Name] = formValFromInterface(fld.FieldType, vals[i])
+				i++
+			}
+		}
+		out = append(out, outRow)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return nil, errors.Wrap(err, "unable to close rows for table values")
+	}
+
+	return out, nil
 }
 
 func generateInsertStatement(tableName string, fields []*FormField) string {
@@ -311,8 +371,8 @@ func saveFormSubmission(ctx context.Context, username string, frm *Form, req *ht
 	for _, field := range frm.Fields {
 		var val interface{}
 		var err error
-		switch field.DBFieldType {
-		case DBInteger:
+		switch field.FieldType {
+		case FormInteger:
 			if !field.Required && req.FormValue(field.Name) == "" {
 				val = nil
 			} else {
@@ -321,7 +381,7 @@ func saveFormSubmission(ctx context.Context, username string, frm *Form, req *ht
 					return 0, errors.Wrap(err, fmt.Sprintf("unable to parse as int %s: %s", field.Name, req.FormValue(field.Name)))
 				}
 			}
-		case DBDecimal:
+		case FormDecimal:
 			if !field.Required && req.FormValue(field.Name) == "" {
 				val = nil
 			} else {
@@ -330,7 +390,7 @@ func saveFormSubmission(ctx context.Context, username string, frm *Form, req *ht
 					return 0, errors.Wrap(err, fmt.Sprintf("unable to parse as decimal %s: %s", field.Name, req.FormValue(field.Name)))
 				}
 			}
-		case DBMoney:
+		case FormMoney:
 			if !field.Required && req.FormValue(field.Name) == "" {
 				val = nil
 			} else {
@@ -339,7 +399,7 @@ func saveFormSubmission(ctx context.Context, username string, frm *Form, req *ht
 					return 0, errors.Wrap(err, fmt.Sprintf("unable to parse as money %s: %s", field.Name, req.FormValue(field.Name)))
 				}
 			}
-		case DBFloat:
+		case FormFloat:
 			if !field.Required && req.FormValue(field.Name) == "" {
 				val = nil
 			} else {
@@ -348,10 +408,10 @@ func saveFormSubmission(ctx context.Context, username string, frm *Form, req *ht
 					return 0, errors.Wrap(err, fmt.Sprintf("unable to parse as float %s: %s", field.Name, req.FormValue(field.Name)))
 				}
 			}
-		case DBBoolean:
-			// bools can't be not null
+		// bools can't be not null
+		case FormBoolean:
 			val = req.FormValue(field.Name) == "1"
-		case DBTimeStamp:
+		case FormTimeStamp:
 			if !field.Required && req.FormValue(field.Name) == "" {
 				val = nil
 			} else {
@@ -373,6 +433,63 @@ func saveFormSubmission(ctx context.Context, username string, frm *Form, req *ht
 		return 0, err
 	}
 	return insertId, nil
+}
+
+func emptyFormVal(fieldType FormFieldType) interface{} {
+	switch fieldType {
+	case FormText:
+		return ""
+	case FormVarChar:
+		return ""
+	case FormInteger:
+		return int64(0)
+	case FormDecimal:
+		return decimal.Decimal{}
+	case FormMoney:
+		return decimal.Decimal{}
+	case FormFloat:
+		return float64(0)
+	case FormBoolean:
+		return false
+	case FormSelect:
+		return ""
+	case FormRadio:
+		return ""
+	case FormTimeStamp:
+		return time.Time{}
+	case FormDate:
+		return time.Time{}
+	}
+	return ""
+}
+
+func formValFromInterface(fieldType FormFieldType, valPtr interface{}) string {
+	val := *(valPtr.(*interface{}))
+	switch fieldType {
+	case FormText:
+		return val.(string)
+	case FormVarChar:
+		return val.(string)
+	case FormInteger:
+		return fmt.Sprintf("%v", val.(int64))
+	case FormDecimal:
+		return fmt.Sprintf("%v", val.(decimal.Decimal))
+	case FormMoney:
+		return fmt.Sprintf("%v", val.(decimal.Decimal))
+	case FormFloat:
+		return fmt.Sprintf("%v", val.(float64))
+	case FormBoolean:
+		return fmt.Sprintf("%v", val.(bool))
+	case FormSelect:
+		return val.(string)
+	case FormRadio:
+		return val.(string)
+	case FormTimeStamp:
+		return fmt.Sprintf("%v", val.(time.Time))
+	case FormDate:
+		return fmt.Sprintf("%v", val.(time.Time))
+	}
+	return ""
 }
 
 type handler struct {
@@ -404,6 +521,13 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		formPath = formPath[1:]
 	}
 
+	// are we looking at submitted fields?
+	isList := false
+	if strings.HasSuffix(formPath, "/list") {
+		formPath = formPath[0 : len(formPath)-len("/list")]
+		isList = true
+	}
+
 	// leverage the context from our request to cancel queries and whatnot if the http client goes away
 	ctx := req.Context()
 
@@ -420,16 +544,39 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if req.Method == http.MethodGet {
-		// TODO: this is in every request for development purposes, remove when done.
-		formTemplate, err = template.ParseFiles("index.template.html")
-		if err != nil {
-			log.Println(err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		if isList {
+			// we are requesting a list of submissions for this user
+			listTemplate, err = template.ParseFiles("list.template.html")
+			if err != nil {
+				log.Println(err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			vals, err := loadFormList(ctx, username, frm)
+			if err != nil {
+				log.Println(err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			err = listTemplate.Execute(w, map[string]interface{}{"frm": frm, "vals": vals})
+			if err != nil {
+				log.Println(err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		} else {
+			// TODO: this is in every request for development purposes, remove when done.
+			formTemplate, err = template.ParseFiles("index.template.html")
+			if err != nil {
+				log.Println(err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 			err = formTemplate.Execute(w, frm)
 			if err != nil {
 				log.Println(err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
 			}
 		}
 	} else if req.Method == http.MethodPost {
@@ -437,6 +584,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		cookie := http.Cookie{Name: "inserted", Value: strconv.Itoa(insertedId)}
 		http.SetCookie(w, &cookie)

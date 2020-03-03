@@ -33,7 +33,21 @@
         })();
     </script>
 </head>
-<body>
+
+{{ define "label"}}
+    <label for="{{ .Name }}">
+        {{ .Label }}
+        {{ if .Required }}
+            <span class="text-danger">*</span>
+        {{ end }}
+    </label>
+{{ end }}
+
+{{ define "description" }}
+    <div class="small">
+        {{.Description}}
+    </div>
+{{ end }}
 
 <body class="bg-light">
 <div class="container">
@@ -58,48 +72,93 @@
                     {{ if ne .SectionHeading "" }}
                         <h4 class="mb-3">{{.SectionHeading}}</h4>
                     {{end}}
-                    {{ if or (eq .FormFieldType "text") (eq .FormFieldType "number") (eq .FormFieldType "datetime-local") }}
+                    {{ if eq .FieldType "text" }}
                         <div class="mb-3">
-                            <label for="{{ .Name }}">
-                                {{ .Label }}
-                                {{ if .Required }}
-                                    <span class="text-danger">*</span>
-                                {{ end }}
-                            </label>
-                            <input type="{{.FormFieldType}}" class="form-control" name="{{.Name}}" id="{{ .Name }}"
-                                   placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}>
-                            <div class="small">
-                                {{.Description}}
-                            </div>
-                        </div>
-                    {{ end }}
-                    {{ if eq .FormFieldType "textarea" }}
-                        <div class="mb-3">
-                            <label for="{{ .Name }}">
-                                {{ .Label }}
-                                {{ if .Required }}
-                                    <span class="text-danger">*</span>
-                                {{ end }}
-                            </label>
-                            <textarea class="form-control" name="{{.Name}}" id="{{ .Name }}"
+                            {{ template "label" . }}
+                            <textarea class="form-control"
+                                      name="{{.Name}}"
+                                      id="{{ .Name }}"
                                       rows="3"
-                                      placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}></textarea>
-                            <div class="small">
-                                {{.Description }}
-                            </div>
+                                      placeholder="{{ .Placeholder }}"
+                                      {{ if .Required }}required{{ end }}></textarea>
+                            {{ template "description" . }}
                         </div>
-                    {{ end }}
-                    {{ if eq .FormFieldType "checkbox" }}
+                    {{ else if eq .FieldType "varchar" }}
+                        <div class="mb-3">
+                            {{ template "label" . }}
+                            <input type="text"
+                                   class="form-control"
+                                   name="{{.Name}}"
+                                   id="{{ .Name }}"
+                                   {{ if .Regex }}pattern="{{ .Regex }}"{{ end}}
+                                   placeholder="{{ .Placeholder }}"
+                                    {{ if .Required }}required{{ end }}>
+                            {{ template "description" . }}
+                        </div>
+                    {{ else if eq .FieldType "integer" }}
+                        <div class="mb-3">
+                            {{ template "label" . }}
+                            <input type="{{.FieldType}}"
+                                   class="form-control"
+                                   name="{{.Name}}"
+                                   id="{{ .Name }}"
+                                   placeholder="{{ .Placeholder }}"
+                                   pattern="{{ or .Regex "\\d*" }}"
+                                   {{ if .Required }}required{{ end }}>
+                            {{ template "description" . }}
+                        </div>
+                    {{ else if eq .FieldType "decimal" }}
+                        <div class="mb-3">
+                            {{ template "label" . }}
+                            <input type="{{.FieldType}}"
+                                   class="form-control"
+                                   name="{{.Name}}"
+                                   id="{{ .Name }}"
+                                   placeholder="{{ .Placeholder }}"
+                                   pattern="{{ or .Regex "[\\d.]*" }}"
+                                   {{ if .Required }}required{{ end }}>
+                            {{ template "description" . }}
+                        </div>
+                    {{ else if eq .FieldType "money" }}
+                        <div class="mb-3">
+                            {{ template "label" . }}
+                            <div class="input-group">
+                                <div class="input-group-prepend">
+                                    <span class="input-group-text" id="{{ .Name }}-addon">$</span>
+                                </div>
+                                <input type="{{.FieldType}}"
+                                       class="form-control"
+                                       name="{{.Name}}"
+                                       id="{{ .Name }}"
+                                       placeholder="{{ .Placeholder }}"
+                                       pattern="{{ or .Regex "\\d+\\.\\d\\d" }}"
+                                       aria-describedby="{{ .Name }}-addon"
+                                       {{ if .Required }}required{{ end }}>
+                            </div>
+                            {{ template "description" . }}
+                        </div>
+                    {{ else if eq .FieldType "float" }}
+                        <div class="mb-3">
+                            {{ template "label" . }}
+                            <input type="{{.FieldType}}"
+                                   class="form-control"
+                                   name="{{.Name}}"
+                                   id="{{ .Name }}"
+                                   placeholder="{{ .Placeholder }}"
+                                   pattern="{{ or .Regex "[\\d.]*" }}"
+                                   {{ if .Required }}required{{ end }}>
+                            {{ template "description" . }}
+                        </div>
+                    {{ else if eq .FieldType "boolean" }}
                         <div class="mb-3">
                             <div class="custom-control custom-checkbox">
                                 <input type="checkbox" class="custom-control-input" name="{{.Name}}" id="{{.Name}}"
                                        value="1">
                                 <label class="custom-control-label" for="{{.Name}}">{{.Label}}</label>
-                                <div class="small">{{.Description}}</div>
+                                {{ template "description" . }}
                             </div>
                         </div>
-                    {{ end }}
-                    {{ if eq .FormFieldType "select" }}
+                    {{ else if eq .FieldType "select" }}
                         <div class="mb-3">
                             <label for="{{.Name}}">{{.Label}}</label>
                             <select class="custom-select" id="{{.Name}}" name="{{.Name}}"
@@ -111,22 +170,42 @@
                             </select>
                             <div class="small">{{.Description}}</div>
                         </div>
-
-                    {{ end }}
-                    {{ if eq .FormFieldType "radio" }}
+                    {{ else if eq .FieldType "radio" }}
                         {{$field := .}}
                         <div class="mb-3">
                             <label class="d-block">{{.Label}} <span class="text-danger">*</span></label>
                             {{ range $i, $opt := .Options }}
                                 <div class="form-check form-check-inline">
-                                    <input class="form-check-input" type="radio" id="{{$field.Name}}-{{$i}}" name="{{$field.Name}}" value="{{$opt}}"
+                                    <input class="form-check-input" type="radio" id="{{$field.Name}}-{{$i}}"
+                                           name="{{$field.Name}}" value="{{$opt}}"
                                            {{ if $field.Required }}required{{ end }}>
                                     <label class="form-check-label" for="{{$field.Name}}-{{$i}}">{{$opt}}</label>
                                 </div>
                             {{ end }}
                             <div class="small">{{$field.Description}}</div>
                         </div>
-
+                    {{ else if eq .FieldType "timestamp" }}
+                        <div class="mb-3">
+                            {{ template "label" . }}
+                            <input class="form-control"
+                                   name="{{.Name}}"
+                                   id="{{ .Name }}"
+                                   placeholder="{{ .Placeholder }}"
+                                   type="datetime-local"
+                                   {{ if .Required }}required{{ end }}>
+                            {{ template "description" . }}
+                        </div>
+                    {{ else if eq .FieldType "date" }}
+                        <div class="mb-3">
+                            {{ template "label" . }}
+                            <input class="form-control"
+                                   name="{{.Name}}"
+                                   id="{{ .Name }}"
+                                   placeholder="{{ .Placeholder }}"
+                                   type="date"
+                                   {{ if .Required }}required{{ end }}>
+                            {{ template "description" . }}
+                        </div>
                     {{ end }}
                     {{ if .LinebreakAfter }}
                         <hr class="mb-4">
