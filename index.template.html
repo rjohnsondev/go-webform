@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>{{ .Name }}</title>
+    <title>{{ .frm.Name }}</title>
 
     <link rel="stylesheet" href="/static/bootstrap.min.css"
           integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
@@ -52,15 +52,15 @@
 <body class="bg-light">
 <div class="container">
     <div class="py-5 text-center">
-        <h2>{{ .Name }}</h2>
-        <p class="lead">{{ .Description }}</p>
+        <h2>{{ .frm.Name }}</h2>
+        <p class="lead">{{ .frm.Description }}</p>
     </div>
 
     <div class="row">
         <div class="col order-md-1">
-            {{ if ne .PreviouslyInsertedRecord "" }}
+            {{ if ne .frm.PreviouslyInsertedRecord "" }}
                 <div class="alert alert-success alert-dismissible fade show" id="inserted_alert" role="alert">
-                    Record saved, record id: {{ .PreviouslyInsertedRecord }}
+                    Record saved, record id: {{ .frm.PreviouslyInsertedRecord }}
                     <button type="button" class="close" data-dismiss="alert" aria-label="Close">
                         <span aria-hidden="true">&times;</span>
                     </button>
@@ -68,7 +68,8 @@
             {{ end }}
             <form method="POST" enctype="application/x-www-form-urlencoded" class="needs-validation" novalidate>
                 <input type="hidden" name="timezone-offset" id="timezone-offset" value="-600">
-                {{ range .Fields }}
+                {{ $vals := .vals }}
+                {{ range .frm.Fields }}
                     {{ if ne .SectionHeading "" }}
                         <h4 class="mb-3">{{.SectionHeading}}</h4>
                     {{end}}
@@ -80,7 +81,7 @@
                                       id="{{ .Name }}"
                                       rows="3"
                                       placeholder="{{ .Placeholder }}"
-                                      {{ if .Required }}required{{ end }}></textarea>
+                                      {{ if .Required }}required{{ end }}>{{ index $vals .Name }}</textarea>
                             {{ template "description" . }}
                         </div>
                     {{ else if eq .FieldType "varchar" }}
@@ -92,6 +93,7 @@
                                    id="{{ .Name }}"
                                    {{ if .Regex }}pattern="{{ .Regex }}"{{ end}}
                                    placeholder="{{ .Placeholder }}"
+                                   value="{{ index $vals .Name }}"
                                     {{ if .Required }}required{{ end }}>
                             {{ template "description" . }}
                         </div>
@@ -104,6 +106,7 @@
                                    id="{{ .Name }}"
                                    placeholder="{{ .Placeholder }}"
                                    pattern="{{ or .Regex "\\d*" }}"
+                                   value="{{ index $vals .Name }}"
                                    {{ if .Required }}required{{ end }}>
                             {{ template "description" . }}
                         </div>
@@ -116,6 +119,7 @@
                                    id="{{ .Name }}"
                                    placeholder="{{ .Placeholder }}"
                                    pattern="{{ or .Regex "[\\d.]*" }}"
+                                   value="{{ index $vals .Name }}"
                                    {{ if .Required }}required{{ end }}>
                             {{ template "description" . }}
                         </div>
@@ -133,6 +137,7 @@
                                        placeholder="{{ .Placeholder }}"
                                        pattern="{{ or .Regex "\\d+\\.\\d\\d" }}"
                                        aria-describedby="{{ .Name }}-addon"
+                                       value="{{ index $vals .Name }}"
                                        {{ if .Required }}required{{ end }}>
                             </div>
                             {{ template "description" . }}
@@ -146,6 +151,7 @@
                                    id="{{ .Name }}"
                                    placeholder="{{ .Placeholder }}"
                                    pattern="{{ or .Regex "[\\d.]*" }}"
+                                   value="{{ index $vals .Name }}"
                                    {{ if .Required }}required{{ end }}>
                             {{ template "description" . }}
                         </div>
@@ -153,6 +159,7 @@
                         <div class="mb-3">
                             <div class="custom-control custom-checkbox">
                                 <input type="checkbox" class="custom-control-input" name="{{.Name}}" id="{{.Name}}"
+                                       {{ if eq (index $vals .Name) "1" }}checked{{end}}
                                        value="1">
                                 <label class="custom-control-label" for="{{.Name}}">{{.Label}}</label>
                                 {{ template "description" . }}
@@ -165,7 +172,7 @@
                                     {{ if .Required }}required{{ end }}>
                                 <option value="">Choose...</option>
                                 {{ range .Options }}
-                                    <option>{{ . }}</option>
+                                    <option {{ if eq (index $vals .Name) . }}selected{{end}}>{{ . }}</option>
                                 {{ end }}
                             </select>
                             <div class="small">{{.Description}}</div>
@@ -176,8 +183,12 @@
                             <label class="d-block">{{.Label}} <span class="text-danger">*</span></label>
                             {{ range $i, $opt := .Options }}
                                 <div class="form-check form-check-inline">
-                                    <input class="form-check-input" type="radio" id="{{$field.Name}}-{{$i}}"
-                                           name="{{$field.Name}}" value="{{$opt}}"
+                                    <input class="form-check-input"
+                                           type="radio"
+                                           id="{{$field.Name}}-{{$i}}"
+                                           name="{{$field.Name}}"
+                                           value="{{$opt}}"
+                                           {{ if eq (index $vals $field.Name) $opt }}checked{{end}}
                                            {{ if $field.Required }}required{{ end }}>
                                     <label class="form-check-label" for="{{$field.Name}}-{{$i}}">{{$opt}}</label>
                                 </div>
@@ -192,6 +203,7 @@
                                    id="{{ .Name }}"
                                    placeholder="{{ .Placeholder }}"
                                    type="datetime-local"
+                                   value="{{ index $vals .Name }}"
                                    {{ if .Required }}required{{ end }}>
                             {{ template "description" . }}
                         </div>
@@ -203,6 +215,7 @@
                                    id="{{ .Name }}"
                                    placeholder="{{ .Placeholder }}"
                                    type="date"
+                                   value="{{ index $vals .Name }}"
                                    {{ if .Required }}required{{ end }}>
                             {{ template "description" . }}
                         </div>
@@ -219,7 +232,7 @@
     </div>
 
     <footer class="my-5 pt-5 text-muted text-center text-small">
-        <p class="mb-1">saving to: {{ .TableName }}</p>
+        <p class="mb-1">saving to: {{ .frm.TableName }}</p>
     </footer>
 </div>
 

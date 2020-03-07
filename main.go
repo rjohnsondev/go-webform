@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/BurntSushi/toml"
+	// "github.com/davecgh/go-spew/spew"
 	_ "github.com/denisenkom/go-mssqldb"
 	"github.com/gomarkdown/markdown"
+	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
 	"github.com/jcmturner/goidentity/v6"
 	"github.com/jcmturner/gokrb5/v8/keytab"
@@ -271,6 +273,11 @@ func loadForm(ctx context.Context, formPath string) (*Form, error) {
 func loadFormList(ctx context.Context, user string, frm *Form) ([]map[string]string, error) {
 	cols := make([]string, 0, len(frm.Fields))
 	vals := make([]interface{}, 0, len(cols))
+	// add the id for the first col
+	cols = append(cols, "id")
+	var val interface{} = 0
+	vals = append(vals, &val)
+	// add the rest
 	for _, fld := range frm.Fields {
 		if fld.IncludeInSummary {
 			cols = append(cols, fld.Name)
@@ -302,6 +309,10 @@ func loadFormList(ctx context.Context, user string, frm *Form) ([]map[string]str
 		}
 		outRow := make(map[string]string)
 		i := 0
+		// get the id out first
+		outRow["id"] = formValFromInterface(FormInteger, vals[i])
+		i++
+		// now the rest
 		for _, fld := range frm.Fields {
 			if fld.IncludeInSummary {
 				outRow[fld.Name] = formValFromInterface(fld.FieldType, vals[i])
@@ -315,6 +326,40 @@ func loadFormList(ctx context.Context, user string, frm *Form) ([]map[string]str
 	}
 
 	return out, nil
+}
+
+func loadFormEntry(ctx context.Context, username string, id int, frm *Form) (map[string]string, error) {
+	cols := make([]string, 0, len(frm.Fields))
+	vals := make([]interface{}, 0, len(cols))
+	for _, fld := range frm.Fields {
+		cols = append(cols, fld.Name)
+		val := emptyFormVal(fld.FieldType)
+		vals = append(vals, &val)
+	}
+
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE ", strings.Join(cols, ","), frm.TableName)
+	if dbType == DbSqlServer {
+		query += "id = @p1 AND created_user = @p2"
+	} else {
+		query += "id = $1 AND created_user = $2"
+	}
+	err := db.QueryRowContext(ctx, query, id, username).Scan(vals...)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, errors.Wrap(err, "Unable to find record")
+		}
+		return nil, errors.Wrap(err, "loadFormList query error")
+	}
+
+	outRow := make(map[string]string)
+	i := 0
+	for _, fld := range frm.Fields {
+		outRow[fld.Name] = formValFromInterface(fld.FieldType, vals[i])
+		i++
+	}
+
+	return outRow, nil
 }
 
 func generateInsertStatement(tableName string, fields []*FormField) string {
@@ -465,6 +510,11 @@ func emptyFormVal(fieldType FormFieldType) interface{} {
 
 func formValFromInterface(fieldType FormFieldType, valPtr interface{}) string {
 	val := *(valPtr.(*interface{}))
+
+	if val == nil {
+		return ""
+	}
+
 	switch fieldType {
 	case FormText:
 		return val.(string)
@@ -478,8 +528,8 @@ func formValFromInterface(fieldType FormFieldType, valPtr interface{}) string {
 		return fmt.Sprintf("%v", val.(decimal.Decimal))
 	case FormFloat:
 		return fmt.Sprintf("%v", val.(float64))
-	case FormBoolean:
-		return fmt.Sprintf("%v", val.(bool))
+	//case FormBoolean:
+	//	return fmt.Sprintf("%v", val.(bool))
 	case FormSelect:
 		return val.(string)
 	case FormRadio:
@@ -488,47 +538,26 @@ func formValFromInterface(fieldType FormFieldType, valPtr interface{}) string {
 		return fmt.Sprintf("%v", val.(time.Time))
 	case FormDate:
 		return fmt.Sprintf("%v", val.(time.Time))
+	case FormBoolean:
+		if val.(bool) {
+			return "1"
+		} else {
+			return ""
+		}
 	}
 	return ""
 }
 
-type handler struct {
-	staticHandler http.Handler
-	useSPNEGO     bool
-}
-
-func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func ServeForm(w http.ResponseWriter, req *http.Request) {
 	var err error
 
-	username := "anonymous"
-	if h.useSPNEGO {
-		creds := goidentity.FromHTTPRequestContext(req)
-		username = creds.UserName()
-		//creds.UserName(),
-		//creds.Domain(),
-		//creds.AuthTime(),
-		//creds.SessionID(),
-	}
-
-	formPath := req.URL.Path
-	if strings.HasPrefix(formPath, "/static/") {
-		http.StripPrefix("/static/", h.staticHandler).ServeHTTP(w, req)
+	vars := mux.Vars(req)
+	formPath, exists := vars["table_name"]
+	if !exists {
+		http.Error(w, "Check form path", http.StatusNotFound)
 		return
 	}
 
-	// get the form path by stripping off the initial slash.
-	if len(formPath) > 1 {
-		formPath = formPath[1:]
-	}
-
-	// are we looking at submitted fields?
-	isList := false
-	if strings.HasSuffix(formPath, "/list") {
-		formPath = formPath[0 : len(formPath)-len("/list")]
-		isList = true
-	}
-
-	// leverage the context from our request to cancel queries and whatnot if the http client goes away
 	ctx := req.Context()
 
 	var frm *Form
@@ -544,42 +573,28 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if req.Method == http.MethodGet {
-		if isList {
-			// we are requesting a list of submissions for this user
-			listTemplate, err = template.ParseFiles("list.template.html")
-			if err != nil {
-				log.Println(err)
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			vals, err := loadFormList(ctx, username, frm)
-			if err != nil {
-				log.Println(err)
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			err = listTemplate.Execute(w, map[string]interface{}{"frm": frm, "vals": vals})
-			if err != nil {
-				log.Println(err)
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		} else {
-			// TODO: this is in every request for development purposes, remove when done.
-			formTemplate, err = template.ParseFiles("index.template.html")
-			if err != nil {
-				log.Println(err)
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			err = formTemplate.Execute(w, frm)
-			if err != nil {
-				log.Println(err)
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
+
+		// TODO: this is in every request for development purposes, remove when done.
+		formTemplate, err = template.ParseFiles("index.template.html")
+		if err != nil {
+			log.Println(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		err = formTemplate.Execute(w, map[string]interface{}{"frm": frm, "vals": map[string]string{}})
+		if err != nil {
+			log.Println(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 	} else if req.Method == http.MethodPost {
+
+		creds := goidentity.FromHTTPRequestContext(req)
+		username := "anonymous"
+		if creds != nil {
+			username = creds.UserName()
+		}
+
 		insertedId, err := saveFormSubmission(ctx, username, frm, req)
 		if err != nil {
 			log.Println(err)
@@ -589,8 +604,105 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		cookie := http.Cookie{Name: "inserted", Value: strconv.Itoa(insertedId)}
 		http.SetCookie(w, &cookie)
 		http.Redirect(w, req, req.URL.Path, 302)
+
+	}
+}
+
+func ServeFormListEntries(w http.ResponseWriter, req *http.Request) {
+	var err error
+
+	vars := mux.Vars(req)
+	formPath, exists := vars["table_name"]
+	if !exists {
+		http.Error(w, "Check form path", http.StatusNotFound)
+		return
 	}
 
+	ctx := req.Context()
+
+	var frm *Form
+	if frm, err = loadForm(ctx, formPath); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	creds := goidentity.FromHTTPRequestContext(req)
+	username := "anonymous"
+	if creds != nil {
+		username = creds.UserName()
+	}
+
+	// we are requesting a list of submissions for this user
+	listTemplate, err = template.ParseFiles("list.template.html")
+	if err != nil {
+		log.Println(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	vals, err := loadFormList(ctx, username, frm)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	err = listTemplate.Execute(w, map[string]interface{}{"frm": frm, "vals": vals})
+	if err != nil {
+		log.Println(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+func ServeFormEntry(w http.ResponseWriter, req *http.Request) {
+	var err error
+
+	vars := mux.Vars(req)
+	formPath, exists := vars["table_name"]
+	if !exists {
+		http.Error(w, "Check form path", http.StatusNotFound)
+		return
+	}
+	entryIdStr, exists := vars["id"]
+	entryId, err := strconv.Atoi(entryIdStr)
+	if !exists || err != nil {
+		http.Error(w, "Check form id path", http.StatusNotFound)
+		return
+	}
+
+	ctx := req.Context()
+
+	var frm *Form
+	if frm, err = loadForm(ctx, formPath); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	creds := goidentity.FromHTTPRequestContext(req)
+	username := "anonymous"
+	if creds != nil {
+		username = creds.UserName()
+	}
+
+	// we are requesting a list of submissions for this user
+	formTemplate, err = template.ParseFiles("index.template.html")
+	if err != nil {
+		log.Println(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	vals, err := loadFormEntry(ctx, username, entryId, frm)
+	// fmt.Println(vals)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	err = formTemplate.Execute(w, map[string]interface{}{"frm": frm, "vals": vals})
+	if err != nil {
+		log.Println(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 type SessionMgr struct {
@@ -658,6 +770,22 @@ type authConfig struct {
 	SessionKey string
 }
 
+type spnegoMiddleware struct {
+	kt         *keytab.Keytab
+	sessionKey string
+	cookieName string
+}
+
+func (sm *spnegoMiddleware) Middleware(next http.Handler) http.Handler {
+	l := log.New(os.Stderr, "GOKRB5 Service: ", log.Ldate|log.Ltime|log.Lshortfile)
+	return spnego.SPNEGOKRB5Authenticate(
+		next,
+		sm.kt,
+		service.Logger(l),
+		service.SessionManager(NewSessionMgr(sm.sessionKey, sm.cookieName)),
+	)
+}
+
 func main() {
 	var err error
 
@@ -692,15 +820,17 @@ func main() {
 	}
 
 	// start listening
-	h := &handler{
-		staticHandler: http.FileServer(http.Dir(conf.Server.StaticDir)),
-		useSPNEGO:     conf.Auth.Keytab != "",
-	}
 
-	l := log.New(os.Stderr, "GOKRB5 Service: ", log.Ldate|log.Ltime|log.Lshortfile)
+	r := mux.NewRouter()
+	r.PathPrefix("/static/").Handler(
+		http.StripPrefix("/static/", http.FileServer(http.Dir(conf.Server.StaticDir))),
+	)
+	r.HandleFunc("/{table_name}/edit/{id:[0-9]+}", ServeFormEntry)
+	r.HandleFunc("/{table_name}/list", ServeFormListEntries)
+	r.HandleFunc("/{table_name}", ServeForm)
+	r.HandleFunc("/", ServeForm)
 
-	var sh http.Handler = h
-	if h.useSPNEGO {
+	if conf.Auth.Keytab != "" {
 		b, err := ioutil.ReadFile(conf.Auth.Keytab)
 		if err != nil {
 			log.Fatal(err)
@@ -710,16 +840,20 @@ func main() {
 			log.Fatal(err)
 		}
 
-		sh = spnego.SPNEGOKRB5Authenticate(h, kt, service.Logger(l),
-			service.SessionManager(NewSessionMgr(conf.Auth.SessionKey, conf.Auth.CookieName)))
+		sm := spnegoMiddleware{
+			kt:         kt,
+			sessionKey: conf.Auth.SessionKey,
+			cookieName: conf.Auth.CookieName,
+		}
+		r.Use(sm.Middleware)
 	}
 
 	if conf.Server.Certificate != "" {
 		log.Print("Starting TLS (https) server, listening on " + conf.Server.Listen)
-		err = http.ListenAndServeTLS(conf.Server.Listen, conf.Server.Certificate, conf.Server.Key, sh)
+		err = http.ListenAndServeTLS(conf.Server.Listen, conf.Server.Certificate, conf.Server.Key, r)
 	} else {
 		log.Print("Starting (http) server, listening on " + conf.Server.Listen)
-		err = http.ListenAndServe(conf.Server.Listen, sh)
+		err = http.ListenAndServe(conf.Server.Listen, r)
 	}
 	if err != nil {
 		log.Fatal(err)
