@@ -66,8 +66,15 @@
                     </button>
                 </div>
             {{ end }}
-            <form method="POST" enctype="application/x-www-form-urlencoded" class="needs-validation" novalidate>
+
+            {{ if ne (index .vals "id") "" }}
+                <a href="/{{.frm.TableName}}/list" class="btn btn-secondary mb-3">&lt; Back</a>
+            {{ end }}
+
+            <form method="POST" action="" enctype="application/x-www-form-urlencoded" class="needs-validation"
+                  novalidate>
                 <input type="hidden" name="timezone-offset" id="timezone-offset" value="-600">
+                <input type="hidden" name="id" value="{{ index .vals "id" }}">
                 {{ $vals := .vals }}
                 {{ range .frm.Fields }}
                     {{ if ne .SectionHeading "" }}
@@ -100,12 +107,13 @@
                     {{ else if eq .FieldType "integer" }}
                         <div class="mb-3">
                             {{ template "label" . }}
-                            <input type="{{.FieldType}}"
+                            <input type="number"
                                    class="form-control"
                                    name="{{.Name}}"
                                    id="{{ .Name }}"
                                    placeholder="{{ .Placeholder }}"
                                    pattern="{{ or .Regex "\\d*" }}"
+                                   step="1"
                                    value="{{ index $vals .Name }}"
                                    {{ if .Required }}required{{ end }}>
                             {{ template "description" . }}
@@ -113,7 +121,7 @@
                     {{ else if eq .FieldType "decimal" }}
                         <div class="mb-3">
                             {{ template "label" . }}
-                            <input type="{{.FieldType}}"
+                            <input type="text"
                                    class="form-control"
                                    name="{{.Name}}"
                                    id="{{ .Name }}"
@@ -130,12 +138,13 @@
                                 <div class="input-group-prepend">
                                     <span class="input-group-text" id="{{ .Name }}-addon">$</span>
                                 </div>
-                                <input type="{{.FieldType}}"
+                                <input type="number"
                                        class="form-control"
                                        name="{{.Name}}"
                                        id="{{ .Name }}"
                                        placeholder="{{ .Placeholder }}"
                                        pattern="{{ or .Regex "\\d+\\.\\d\\d" }}"
+                                       step="0.01"
                                        aria-describedby="{{ .Name }}-addon"
                                        value="{{ index $vals .Name }}"
                                        {{ if .Required }}required{{ end }}>
@@ -145,7 +154,7 @@
                     {{ else if eq .FieldType "float" }}
                         <div class="mb-3">
                             {{ template "label" . }}
-                            <input type="{{.FieldType}}"
+                            <input type="text"
                                    class="form-control"
                                    name="{{.Name}}"
                                    id="{{ .Name }}"
@@ -189,7 +198,7 @@
                                            name="{{$field.Name}}"
                                            value="{{$opt}}"
                                            {{ if eq (index $vals $field.Name) $opt }}checked{{end}}
-                                           {{ if $field.Required }}required{{ end }}>
+                                            {{ if $field.Required }}required{{ end }}>
                                     <label class="form-check-label" for="{{$field.Name}}-{{$i}}">{{$opt}}</label>
                                 </div>
                             {{ end }}
@@ -233,6 +242,7 @@
 
     <footer class="my-5 pt-5 text-muted text-center text-small">
         <p class="mb-1">saving to: {{ .frm.TableName }}</p>
+        <a href="/{{.frm.TableName}}/list" class="btn btn-secondary btn-sm mt-2">View Submissions</a>
     </footer>
 </div>
 

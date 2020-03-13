@@ -29,35 +29,36 @@ VALUES ('name', 'Customer Name', '', '', '', '', false, '', false, true),
 
 CREATE TABLE test_form
 (
-    id               SERIAL      NOT NULL PRIMARY KEY,
-    created_ts       TIMESTAMPTZ NOT NULL,
-    created_user     TEXT        NOT NULL,
+    id                SERIAL      NOT NULL PRIMARY KEY,
+    created_ts        TIMESTAMPTZ NOT NULL,
+    updated_ts        TIMESTAMPTZ NOT NULL,
+    created_user      TEXT        NOT NULL,
     -- below is flexible -----
-    name             VARCHAR     NOT NULL,
-    description      TEXT,
-    age              INT         NOT NULL,
-    height           INT,
-    salesValue       MONEY,
-    fixed            DECIMAL,
-    fractionComplete FLOAT,
-    colour           VARCHAR     NOT NULL,
+    name              VARCHAR     NOT NULL,
+    description       TEXT,
+    age               INT         NOT NULL,
+    height            INT,
+    sales_value       MONEY,
+    fixed             DECIMAL,
+    fraction_complete FLOAT,
+    colour            VARCHAR     NOT NULL,
     -- Bools can't be not null
-    is_active        BOOLEAN     NOT NULL,
-    pickup_scheduled timestamptz NOT NULL,
-    dob              date        NOT NULL
+    is_active         BOOLEAN     NOT NULL,
+    pickup_scheduled  timestamptz NOT NULL,
+    dob               date        NOT NULL
 );
 
 
 CREATE TABLE forms
 (
-    form_id     SERIAL NOT NULL PRIMARY KEY,
-    name        TEXT   NOT NULL,
-    description TEXT   NOT NULL,
-    path        TEXT   NOT NULL UNIQUE,
-    table_name  TEXT   NOT NULL,
-    admins      TEXT   NOT NULL
+    form_id         SERIAL  NOT NULL PRIMARY KEY,
+    name            TEXT    NOT NULL,
+    description     TEXT    NOT NULL,
+    path            TEXT    NOT NULL UNIQUE,
+    table_name      TEXT    NOT NULL,
+    admins          TEXT    NOT NULL,
+    allow_anonymous BOOLEAN NOT NULL
 );
 
 INSERT INTO forms (name, description, path, table_name, admins)
 VALUES ('Test Form', 'This is a test form', 'test_form', 'test_form', '');
-

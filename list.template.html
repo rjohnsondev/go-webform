@@ -16,35 +16,43 @@
         <p class="lead">{{ .frm.Description }}</p>
     </div>
 
+    <a href="/{{.frm.TableName}}" class="btn btn-secondary mb-3">&lt; Back to Insert</a>
+
     <div class="row">
-        <table class="table table-striped table-hover">
-            <thead>
-            <th>#</th>
-            {{ range.frm.Fields }}
-                {{ if .IncludeInSummary }}
-                    <th>{{.Name }}</th>
-                {{ end }}
-            {{ end }}
-            <th></th>
-            </thead>
-            <tbody>
-            {{ $frm := .frm }}
-            {{ range .vals }}
-                <tr>
-                    {{ $row := . }}
-                    <td>{{ index $row "id" }}</td>
-                    {{ range $frm.Fields }}
-                        {{ if .IncludeInSummary }}
-                            <td>{{ index $row .Name }}</td>
-                        {{ end }}
+        <div class="col">
+            <table class="table table-striped table-hover">
+                <thead>
+                <th>#</th>
+                <th>User</th>
+                <th>Submitted</th>
+                {{ range.frm.Fields }}
+                    {{ if .IncludeInSummary }}
+                        <th>{{.Name }}</th>
                     {{ end }}
-                    <td class="text-right">
-                        <a class="btn btn-sm btn-primary" href="/{{$frm.TableName}}/edit/{{$row.id}}">Edit</a>
-                    </td>
-                </tr>
-            {{ end }}
-            </tbody>
-        </table>
+                {{ end }}
+                <th></th>
+                </thead>
+                <tbody>
+                {{ $frm := .frm }}
+                {{ range .vals }}
+                    <tr>
+                        {{ $row := . }}
+                        <td>{{ index $row "id" }}</td>
+                        <td>{{ index $row "created_user" }}</td>
+                        <td>{{ index $row "created_ts" }}</td>
+                        {{ range $frm.Fields }}
+                            {{ if .IncludeInSummary }}
+                                <td>{{ index $row .Name }}</td>
+                            {{ end }}
+                        {{ end }}
+                        <td class="text-right">
+                            <a class="btn btn-sm btn-primary" href="/{{$frm.TableName}}/edit/{{$row.id}}">Edit</a>
+                        </td>
+                    </tr>
+                {{ end }}
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 

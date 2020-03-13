@@ -39,6 +39,11 @@ var dbType DBType
 var formTemplate *template.Template
 var listTemplate *template.Template
 
+// the fact that golang numbers elements based on US layout is frustrating
+// 01 == month, 02 == day
+const DateTimeLocal = "2006-01-02T15:04"
+const DateLocal = "2006-01-02"
+
 type Form struct {
 	Name                     string
 	Description              string
@@ -110,8 +115,8 @@ func loadTableDBCols(ctx context.Context, tableName string) ([]*dbCol, error) {
 			`
 	}
 
-	// we skip the top 3 rows to just get to the content (f.attnum > 3)
-	rows, err := db.QueryContext(ctx, query, tableName, 3)
+	// we skip the top 4 rows to just get to the content (f.attnum > 4)
+	rows, err := db.QueryContext(ctx, query, tableName, 4)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to query table metadata")
 	}
@@ -211,7 +216,10 @@ func loadField(ctx context.Context, col *dbCol, tableName string) (*FormField, e
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// we had no label metadata for this field, that's cool, just give it something default
-			field.Label = strings.Title(strings.ReplaceAll(col.name, "_", " "))
+			field.Label = strings.ReplaceAll(col.name, "_", " ")
+			if len(field.Label) > 0 {
+				field.Label = strings.ToUpper(field.Label[0:1]) + field.Label[1:]
+			}
 		} else {
 			return nil, errors.Wrap(err, fmt.Sprintf("query error, does the table %s exist?", labelsTable))
 		}
@@ -275,8 +283,16 @@ func loadFormList(ctx context.Context, user string, frm *Form) ([]map[string]str
 	vals := make([]interface{}, 0, len(cols))
 	// add the id for the first col
 	cols = append(cols, "id")
-	var val interface{} = 0
-	vals = append(vals, &val)
+	var valId interface{} = 0
+	vals = append(vals, &valId)
+	// created user
+	cols = append(cols, "created_user")
+	var valUsr interface{} = ""
+	vals = append(vals, &valUsr)
+	// created ts
+	cols = append(cols, "created_ts")
+	var valTs interface{} = ""
+	vals = append(vals, &valTs)
 	// add the rest
 	for _, fld := range frm.Fields {
 		if fld.IncludeInSummary {
@@ -312,6 +328,10 @@ func loadFormList(ctx context.Context, user string, frm *Form) ([]map[string]str
 		// get the id out first
 		outRow["id"] = formValFromInterface(FormInteger, vals[i])
 		i++
+		outRow["created_user"] = formValFromInterface(FormVarChar, vals[i])
+		i++
+		outRow["created_ts"] = formValFromInterface(FormTimeStamp, vals[i])
+		i++
 		// now the rest
 		for _, fld := range frm.Fields {
 			if fld.IncludeInSummary {
@@ -332,7 +352,11 @@ func loadFormEntry(ctx context.Context, username string, id int, frm *Form) (map
 	cols := make([]string, 0, len(frm.Fields))
 	vals := make([]interface{}, 0, len(cols))
 	for _, fld := range frm.Fields {
-		cols = append(cols, fld.Name)
+		if fld.FieldType == FormMoney {
+			cols = append(cols, fld.Name+"::numeric")
+		} else {
+			cols = append(cols, fld.Name)
+		}
 		val := emptyFormVal(fld.FieldType)
 		vals = append(vals, &val)
 	}
@@ -374,7 +398,9 @@ func generateInsertStatement(tableName string, fields []*FormField) string {
 			placeholders = append(placeholders, fmt.Sprintf("$%d", i+2))
 		}
 		query = fmt.Sprintf(
-			"INSERT INTO %s (created_ts, created_user, %s) VALUES (CURRENT_TIMESTAMP, $1, %s) RETURNING id",
+			`INSERT INTO %s
+				(created_ts, updated_ts, created_user, %s)
+				VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $1, %s) RETURNING id`,
 			tableName,
 			strings.Join(fieldNames, ","),
 			strings.Join(placeholders, ","))
@@ -384,10 +410,40 @@ func generateInsertStatement(tableName string, fields []*FormField) string {
 			placeholders = append(placeholders, fmt.Sprintf("@p%d", i+2))
 		}
 		query = fmt.Sprintf(
-			"INSERT INTO %s (created_ts, created_user, %s) OUTPUT INSERTED.id VALUES (CURRENT_TIMESTAMP, @p1, %s)",
+			`INSERT INTO %s
+				(created_ts, updated_ts created_user, %s) OUTPUT INSERTED.id
+				VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, @p1, %s)`,
 			tableName,
 			strings.Join(fieldNames, ","),
 			strings.Join(placeholders, ","))
+	}
+	return query
+}
+
+func generateUpdateStatement(tableName string, fields []*FormField) string {
+	fieldNames := make([]string, 0, len(fields))
+	for _, field := range fields {
+		fieldNames = append(fieldNames, field.Name)
+	}
+	query := ""
+	if dbType == DbPostgres {
+		placeholders := ""
+		for i, field := range fields {
+			placeholders = fmt.Sprintf("%s, %s = $%d", placeholders, field.Name, i+3)
+		}
+		query = fmt.Sprintf(
+			`UPDATE %s SET updated_ts = CURRENT_TIMESTAMP %s WHERE id = $1 and created_user = $2 RETURNING id`,
+			tableName,
+			placeholders)
+	} else {
+		placeholders := ""
+		for i, field := range fields {
+			placeholders = fmt.Sprintf("%s, %s = @p%d", placeholders, field.Name, i+3)
+		}
+		query = fmt.Sprintf(
+			`UPDATE %s SET updated_ts = CURRENT_TIMESTAMP %s OUTPUT INSERTED.id WHERE id = @p1 AND created_user = @p2`,
+			tableName,
+			placeholders)
 	}
 	return query
 }
@@ -409,9 +465,18 @@ func minOffsetToTZOffset(minsStr string) string {
 }
 
 func saveFormSubmission(ctx context.Context, username string, frm *Form, req *http.Request) (int, error) {
-	query := generateInsertStatement(frm.TableName, frm.Fields)
 
 	values := make([]interface{}, 0, len(frm.Fields)+1)
+
+	query := ""
+	if req.FormValue("id") == "" {
+		query = generateInsertStatement(frm.TableName, frm.Fields)
+	} else {
+		query = generateUpdateStatement(frm.TableName, frm.Fields)
+		values = append(values, req.FormValue("id"))
+		log.Println("query", query)
+	}
+
 	values = append(values, username)
 	for _, field := range frm.Fields {
 		var val interface{}
@@ -489,9 +554,9 @@ func emptyFormVal(fieldType FormFieldType) interface{} {
 	case FormInteger:
 		return int64(0)
 	case FormDecimal:
-		return decimal.Decimal{}
+		return new(decimal.Decimal)
 	case FormMoney:
-		return decimal.Decimal{}
+		return new(decimal.Decimal)
 	case FormFloat:
 		return float64(0)
 	case FormBoolean:
@@ -523,21 +588,19 @@ func formValFromInterface(fieldType FormFieldType, valPtr interface{}) string {
 	case FormInteger:
 		return fmt.Sprintf("%v", val.(int64))
 	case FormDecimal:
-		return fmt.Sprintf("%v", val.(decimal.Decimal))
+		return string(val.([]uint8))
 	case FormMoney:
-		return fmt.Sprintf("%v", val.(decimal.Decimal))
+		return string(val.([]uint8))
 	case FormFloat:
 		return fmt.Sprintf("%v", val.(float64))
-	//case FormBoolean:
-	//	return fmt.Sprintf("%v", val.(bool))
 	case FormSelect:
 		return val.(string)
 	case FormRadio:
 		return val.(string)
 	case FormTimeStamp:
-		return fmt.Sprintf("%v", val.(time.Time))
+		return val.(time.Time).Format(DateTimeLocal)
 	case FormDate:
-		return fmt.Sprintf("%v", val.(time.Time))
+		return val.(time.Time).Format(DateLocal)
 	case FormBoolean:
 		if val.(bool) {
 			return "1"
@@ -558,6 +621,9 @@ func ServeForm(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	entryIdStr, exists := vars["id"]
+	entryId, _ := strconv.Atoi(entryIdStr)
+
 	ctx := req.Context()
 
 	var frm *Form
@@ -572,28 +638,40 @@ func ServeForm(w http.ResponseWriter, req *http.Request) {
 		http.SetCookie(w, &cookie)
 	}
 
+	creds := goidentity.FromHTTPRequestContext(req)
+	username := "anonymous"
+	if creds != nil {
+		username = creds.UserName()
+	}
+
 	if req.Method == http.MethodGet {
 
-		// TODO: this is in every request for development purposes, remove when done.
+		// TODO: this is in every request for development purposes, can remove when done.
 		formTemplate, err = template.ParseFiles("index.template.html")
 		if err != nil {
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		err = formTemplate.Execute(w, map[string]interface{}{"frm": frm, "vals": map[string]string{}})
+
+		vals := map[string]string{}
+		if entryId > 0 {
+			vals, err = loadFormEntry(ctx, username, entryId, frm)
+			if err != nil {
+				log.Println(err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			vals["id"] = entryIdStr
+		}
+
+		err = formTemplate.Execute(w, map[string]interface{}{"frm": frm, "vals": vals})
 		if err != nil {
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	} else if req.Method == http.MethodPost {
-
-		creds := goidentity.FromHTTPRequestContext(req)
-		username := "anonymous"
-		if creds != nil {
-			username = creds.UserName()
-		}
 
 		insertedId, err := saveFormSubmission(ctx, username, frm, req)
 		if err != nil {
@@ -646,58 +724,6 @@ func ServeFormListEntries(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	err = listTemplate.Execute(w, map[string]interface{}{"frm": frm, "vals": vals})
-	if err != nil {
-		log.Println(err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-}
-
-func ServeFormEntry(w http.ResponseWriter, req *http.Request) {
-	var err error
-
-	vars := mux.Vars(req)
-	formPath, exists := vars["table_name"]
-	if !exists {
-		http.Error(w, "Check form path", http.StatusNotFound)
-		return
-	}
-	entryIdStr, exists := vars["id"]
-	entryId, err := strconv.Atoi(entryIdStr)
-	if !exists || err != nil {
-		http.Error(w, "Check form id path", http.StatusNotFound)
-		return
-	}
-
-	ctx := req.Context()
-
-	var frm *Form
-	if frm, err = loadForm(ctx, formPath); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	creds := goidentity.FromHTTPRequestContext(req)
-	username := "anonymous"
-	if creds != nil {
-		username = creds.UserName()
-	}
-
-	// we are requesting a list of submissions for this user
-	formTemplate, err = template.ParseFiles("index.template.html")
-	if err != nil {
-		log.Println(err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	vals, err := loadFormEntry(ctx, username, entryId, frm)
-	// fmt.Println(vals)
-	if err != nil {
-		log.Println(err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	err = formTemplate.Execute(w, map[string]interface{}{"frm": frm, "vals": vals})
 	if err != nil {
 		log.Println(err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -825,7 +851,7 @@ func main() {
 	r.PathPrefix("/static/").Handler(
 		http.StripPrefix("/static/", http.FileServer(http.Dir(conf.Server.StaticDir))),
 	)
-	r.HandleFunc("/{table_name}/edit/{id:[0-9]+}", ServeFormEntry)
+	r.HandleFunc("/{table_name}/edit/{id:[0-9]+}", ServeForm)
 	r.HandleFunc("/{table_name}/list", ServeFormListEntries)
 	r.HandleFunc("/{table_name}", ServeForm)
 	r.HandleFunc("/", ServeForm)
