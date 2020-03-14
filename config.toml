@@ -15,11 +15,12 @@ template = "index.template.html"
 
 [database]
 # type of database to connect to, used as driver selection
-# dbType = "sqlserver"
-dbType = "postgres"
+dbType = "sqlserver"
+# dbType = "postgres"
 
 # connectionString = "sqlserver://sqlserver:gDqDKNnoBhoPzhpk@35.189.5.107?database=forms"
-connectionString = "user=richard password=richard dbname=forms"
+connectionString = "sqlserver://SA:gDqDKNnoBhoPzhpk101@127.0.0.1?database=forms"
+# connectionString = "user=richard password=richard dbname=forms"
 
 [auth]
 # The system will attempt to use SPNEGO authentication through Kerberos if a keytab file is provided

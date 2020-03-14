@@ -60,5 +60,6 @@ CREATE TABLE forms
     allow_anonymous BOOLEAN NOT NULL
 );
 
-INSERT INTO forms (name, description, path, table_name, admins)
-VALUES ('Test Form', 'This is a test form', 'test_form', 'test_form', '');
+INSERT INTO forms (name, description, path, table_name, admins, allow_anonymous)
+VALUES ('Test Form', 'This is a test form', 'test_form', 'test_form', '', false);
+

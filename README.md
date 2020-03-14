@@ -27,10 +27,21 @@ on for PostgreSQL, the other for SQLServer.
     * The first 3 columns must be `id`, `created_ts`, `created_user` as per the
         template. These are inserted automatically by the system.
     * Columns of type `VARCHAR` are represented by single line text fields
+        * Note: On SQL Server you must specify a length, `VARCHAR(1024)`
+            is roundish...
     * `TEXT` are text areas
-    * `INT` are text fields restricted to numbers
+    * `INT` are number fields restricted to whole numbers
+    * `DECIMAL` are text fields restricted to decimal numbers.
+        * Don't specify a precision here, SQL Server and Postgresql both
+            have pretty generous defaults.
+    * `MONEY` is represented with a leading $ and restricted to decimal
+        with 2 decimal places.
+    * `FLOAT` is a text field restricted to decimals. Remember float is
+        generally useless.
     * `BOOLEAN`/`BIT` are checkboxes
-    * `TIMESTAMPTZ`/`DATETIMEOFFSET` are date / time dropdowns
+    * `TIMESTAMPTZ`/`DATETIMEOFFSET` are date / time dropdowns. Not supported
+        in Firefox, and a bit clumsy to use.
+    * `DATE` is a input with calendar dropdown.
     * Fields marked as `NOT NULL` will be shown as required in the form. Any empty
         strings entered into `NULL` form fields will be converted to `NULL`.
 
@@ -43,14 +54,17 @@ with the suffix _labels.
     ```sql
     CREATE TABLE test_form_labels
     (
-        column_name      VARCHAR(254)  NOT NULL PRIMARY KEY,
-        label            VARCHAR(254)  NOT NULL,
-        description      TEXT          NOT NULL,
-        placeholder      VARCHAR(254)  NOT NULL,
-        section_heading  VARCHAR(254)  NOT NULL,
-        options          VARCHAR(1024) NOT NULL,
-        options_as_radio BIT           NOT NULL,
-        linebreak_after  BIT           NOT NULL
+        column_name        TEXT    NOT NULL PRIMARY KEY,
+        label              TEXT    NOT NULL,
+        description        TEXT    NOT NULL,
+        placeholder        TEXT    NOT NULL,
+        section_heading    TEXT    NOT NULL,
+        options            TEXT    NOT NULL,
+        options_as_radio   BOOLEAN NOT NULL,
+        -- Regex only works for some types
+        regex              TEXT    NOT NULL,
+        linebreak_after    BOOLEAN NOT NULL,
+        include_in_summary BOOLEAN NOT NULL
     );
     ```
 
@@ -67,8 +81,11 @@ with the suffix _labels.
         a select field by default.
     * `options_as_radio` presents the options as radio buttons rather than a
         select (drop-down) field.
+    * `regex` is a regular expression used for text field validation
     * `linebreak_after` is slightly misnamed. It actually adds a horizontal rule
         after the field.
+    * `include_in_summary` indicates if the field should be shown in the list
+        view of form submissions.
         
     Note that if a field exists, but does not have an entry in the `_labels` table,
     it will still be shown with sensible defaults.
@@ -76,9 +93,14 @@ with the suffix _labels.
 4. Add entry into the `forms` table. This will make the form accessible
 
     ```sql
-    INSERT INTO forms (name, description, path, table_name)
-    VALUES ('Test Form', 'This is a test form', 'test_form', 'test_form');
+    INSERT INTO forms (name, description, path, table_name, admins, allow_anonymous)
+    VALUES ('Test Form', 'This is a test form', 'test_form', 'test_form', '', false);
     ```
+   
+   * `admins` is a comma-separated list of AD usernames that are able to see
+        all of the form submissions.
+   * `allow_anonymous` indicates if the form can be submitted without a valid
+        AD username as determined through spnego SSO (useful for testing).
    
    The form should be accessible at: https://servername/path
 
@@ -134,7 +156,7 @@ https://social.technet.microsoft.com/wiki/contents/articles/36470.active-directo
 
     **NOTE:** A `CNAME` (or alias) is _not_ adequate, and will result in auth errors.
 
-    For this example we'll use: `webforms.tsa.local`
+    For this example we'll use: `webforms.win.home.rjohnson.id.au`
 
 2. Create an AD user for the service.
 
@@ -142,17 +164,18 @@ https://social.technet.microsoft.com/wiki/contents/articles/36470.active-directo
    It is separate from the database authentication, and is not the same as the
    user that the service runs as.
    
-   The username we'll use in this example is `webforms@tsa.local` and
-   `TSA\webforms`
+   The username we'll use in this example is `webforms@win.home.rjohnson.id.au`
    
    * Give an initial password, mark it as non-expiring, user can't change.
 
 3. Run the magic command, customising as required:
 
-   `ktpass -out webforms.keytab -mapUser webforms@TSA.LOCAL +rndPass -mapOp set +DumpSalt -crypto AES256-SHA1 -ptype KRB5_NT_PRINCIPAL -princ HTTP/webforms.tsa.local@TSA`
+   ```powershell
+   ktpass -out webforms.keytab -mapUser webforms@WIN.HOME.RJOHNSON.ID.AU +rndPass -mapOp set +DumpSalt -crypto AES256-SHA1 -ptype KRB5_NT_PRINCIPAL -princ HTTP/webforms.win.home.rjohnson.id.au@WIN.HOME.RJOHNSON.ID.AU
+   ```
    
    Note the domain is uppercase in the `-mapUser` and the prefix of `HTTP/` and
-   addition of both the new and classic domain names for the `-princ`
+   duplication of the full domain name for the `-princ`
    
    The generated webforms.keytab file is what we need to provide to the service.
    
@@ -167,6 +190,8 @@ In order for the authentication handshake to work, the site must be added to
 the list of intranet websites under Internet Options -> Security -> Local
 Intranet -> Sites (or the applicable registry entries). Remember the `https://`
 when adding.
+
+If you don't do this you'll get an access denied error.
 
 ### Database Connectivity
 
@@ -189,4 +214,5 @@ service.
 * `https-server.crt/key` as generated for TLS
 * `static` directory
 * `index.template.html`
+* `list.template.html`
 

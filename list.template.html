@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>{{ .Name }} - Submissions</title>
+    <title>{{ .frm.Name }} - Submissions</title>
 
     <link rel="stylesheet" href="/static/bootstrap.min.css"
           integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
@@ -34,6 +34,7 @@
                 </thead>
                 <tbody>
                 {{ $frm := .frm }}
+                {{ $username := .username }}
                 {{ range .vals }}
                     <tr>
                         {{ $row := . }}
