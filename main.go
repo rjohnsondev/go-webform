@@ -4,8 +4,13 @@ import "log"
 
 func main() {
 	conf := parseConfig("config.toml")
+
+	if conf.LDAP.Host != "" {
+		connectToLDAP(conf)
+	}
+
 	connectToDb(conf)
-	// close db gracefully on shutdown
+
 	defer func() {
 		err := db.Close()
 		if err != nil {

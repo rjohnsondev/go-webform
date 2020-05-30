@@ -21,6 +21,7 @@ type Form struct {
 	PreviouslyInsertedRecord string
 	Admins                   map[string]bool
 	AllowAnonymous           bool
+	UseLDAPFields            bool
 }
 
 type FormField struct {
@@ -35,6 +36,7 @@ type FormField struct {
 	SectionHeading   string
 	LinebreakAfter   bool
 	IncludeInSummary bool
+	IsLDAPPopulated  bool
 }
 
 type FormFieldType string

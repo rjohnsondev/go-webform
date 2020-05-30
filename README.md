@@ -44,6 +44,8 @@ on for PostgreSQL, the other for SQLServer.
     * `DATE` is a input with calendar dropdown.
     * Fields marked as `NOT NULL` will be shown as required in the form. Any empty
         strings entered into `NULL` form fields will be converted to `NULL`.
+        
+    
 
 2. Create a metadata table for the form, which must be the name of the data table
 with the suffix _labels.
@@ -93,8 +95,8 @@ with the suffix _labels.
 4. Add entry into the `forms` table. This will make the form accessible
 
     ```sql
-    INSERT INTO forms (name, description, path, table_name, admins, allow_anonymous)
-    VALUES ('Test Form', 'This is a test form', 'test_form', 'test_form', '', false);
+    INSERT INTO forms (name, description, path, table_name, admins, allow_anonymous, use_ldap_fields)
+    VALUES ('Test Form', 'This is a test form', 'test_form', 'test_form', '', false, false);
     ```
    
    * `admins` is a comma-separated list of AD usernames that are able to see
@@ -104,6 +106,31 @@ with the suffix _labels.
    
    The form should be accessible at: https://servername/path
 
+### LDAP integration:
+
+The system can auto-populate fields from an LDAP server (like Active Directory).
+
+To enable this, ensure the config file is updated appropriately with the LDAP credentials.
+Then for the desired form, enable the `use_ldap_fields` column for the applicable row.
+
+If the table has any of these fields, they will be populated from LDAP automatically:
+
+    user_employee_number    VARCHAR(1024)  NOT NULL,
+    user_display_name       VARCHAR(1024)  NOT NULL,
+    user_department         VARCHAR(1024)  NOT NULL,
+    user_email              VARCHAR(1024)  NOT NULL,
+    user_location           VARCHAR(1024)  NOT NULL,
+    manager                 VARCHAR(1024)  NOT NULL,
+    manager_employee_number VARCHAR(1024)  NOT NULL,
+    manager_display_name    VARCHAR(1024)  NOT NULL,
+    manager_department      VARCHAR(1024)  NOT NULL,
+    manager_email           VARCHAR(1024)  NOT NULL,
+    manager_location        VARCHAR(1024)  NOT NULL,
+    
+Unfortunately at this stage we are unable to use the current running user, or the
+SPNEGO user to query the server. Hopefully these libraries will be bridged which
+will obviate the need to store separate cred for the LDAP server.
+    
 ### Configuration
 
 The config file is `config.toml`. It can be changed to have windows line endings

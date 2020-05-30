@@ -22,30 +22,41 @@ CREATE TABLE test_form_labels
 
 INSERT INTO test_form_labels
 VALUES ('name', 'Customer Name', '', '', '', '', false, '', false, true),
-       ('description', 'Description', 'Some extra *details* about __the customer__', '', '', '', true, '',
-        true, false),
+       ('description', 'Description', 'Some extra *details* about __the customer__', '', '', '', true, '', true, false),
        ('age', 'Age of the customer', '', '', 'Customer Details', '', false, '', false, true),
        ('colour', 'Fav colour', '', '', '', 'Red,Green,Blue', true, '', false, true);
 
 CREATE TABLE test_form
 (
-    id                SERIAL      NOT NULL PRIMARY KEY,
-    created_ts        TIMESTAMPTZ NOT NULL,
-    updated_ts        TIMESTAMPTZ NOT NULL,
-    created_user      TEXT        NOT NULL,
+    id                      SERIAL      NOT NULL PRIMARY KEY,
+    created_ts              TIMESTAMPTZ NOT NULL,
+    updated_ts              TIMESTAMPTZ NOT NULL,
+    created_user            TEXT        NOT NULL,
+    -- these are fields that can be used with LDAP integration -----
+    user_employee_number    VARCHAR     NOT NULL,
+    user_display_name       VARCHAR     NOT NULL,
+    user_department         VARCHAR     NOT NULL,
+    user_email              VARCHAR     NOT NULL,
+    user_location           VARCHAR     NOT NULL,
+    manager                 VARCHAR     NOT NULL,
+    manager_employee_number VARCHAR     NOT NULL,
+    manager_display_name    VARCHAR     NOT NULL,
+    manager_department      VARCHAR     NOT NULL,
+    manager_email           VARCHAR     NOT NULL,
+    manager_location        VARCHAR     NOT NULL,
     -- below is flexible -----
-    name              VARCHAR     NOT NULL,
-    description       TEXT,
-    age               INT         NOT NULL,
-    height            INT,
-    sales_value       MONEY,
-    fixed             DECIMAL,
-    fraction_complete FLOAT,
-    colour            VARCHAR     NOT NULL,
+    name                    VARCHAR     NOT NULL,
+    description             TEXT,
+    age                     INT         NOT NULL,
+    height                  INT,
+    sales_value             MONEY,
+    fixed                   DECIMAL,
+    fraction_complete       FLOAT,
+    colour                  VARCHAR     NOT NULL,
     -- Bools can't be not null
-    is_active         BOOLEAN     NOT NULL,
-    pickup_scheduled  timestamptz NOT NULL,
-    dob               date        NOT NULL
+    is_active               BOOLEAN     NOT NULL,
+    pickup_scheduled        timestamptz NULL,
+    dob                     date        NOT NULL
 );
 
 
@@ -57,9 +68,10 @@ CREATE TABLE forms
     path            TEXT    NOT NULL UNIQUE,
     table_name      TEXT    NOT NULL,
     admins          TEXT    NOT NULL,
-    allow_anonymous BOOLEAN NOT NULL
+    allow_anonymous BOOLEAN NOT NULL,
+    use_ldap_fields BOOLEAN NOT NULL
 );
 
-INSERT INTO forms (name, description, path, table_name, admins, allow_anonymous)
-VALUES ('Test Form', 'This is a test form', 'test_form', 'test_form', '', false);
+INSERT INTO forms (name, description, path, table_name, admins, allow_anonymous, use_ldap_fields)
+VALUES ('Test Form', 'This is a test form', 'test_form', 'test_form', '', true, true);
 

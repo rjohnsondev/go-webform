@@ -5,6 +5,7 @@ go 1.13
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/denisenkom/go-mssqldb v0.0.0-20200206145737-bbfc9a55622e
+	github.com/go-ldap/ldap/v3 v3.1.7
 	github.com/gomarkdown/markdown v0.0.0-20200127000047-1813ea067497
 	github.com/gorilla/mux v1.7.4
 	github.com/gorilla/sessions v1.2.0

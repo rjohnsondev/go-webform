@@ -80,7 +80,18 @@
                     {{ if ne .SectionHeading "" }}
                         <h4 class="mb-3">{{.SectionHeading}}</h4>
                     {{end}}
-                    {{ if eq .FieldType "text" }}
+                    {{ if .IsLDAPPopulated }}
+                        {{ if ne (index $vals "id") "" }}
+                            {{ template "label" . }}
+                            <input type="text"
+                                   class="form-control"
+                                   name="{{.Name}}"
+                                   id="{{ .Name }}"
+                                   {{ if .Regex }}pattern="{{ .Regex }}"{{ end}}
+                                   disabled="disabled"
+                                   value="{{ index $vals .Name }}">
+                        {{ end }}
+                    {{ else if eq .FieldType "text" }}
                         <div class="mb-3">
                             {{ template "label" . }}
                             <textarea class="form-control"

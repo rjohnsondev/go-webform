@@ -22,7 +22,8 @@ func saveFormSubmission(ctx context.Context, username string, frm *Form, req *ht
 	values := make([]interface{}, 0, len(frm.Fields)+1)
 
 	query := ""
-	if req.FormValue("id") == "" {
+	isInsert := req.FormValue("id") == ""
+	if isInsert {
 		query = generateInsertStatement(frm.TableName, frm.Fields)
 		// log.Println(query)
 	} else {
@@ -32,10 +33,27 @@ func saveFormSubmission(ctx context.Context, username string, frm *Form, req *ht
 		// log.Println("query", query)
 	}
 
+	ldapValues := make(map[string]string)
+	if frm.UseLDAPFields {
+		var err error
+		ldapValues, err = getLDAPValues(username)
+		if err != nil {
+			return 0, errors.Wrap(err, "unable to get ldap fields from server")
+		}
+	}
+
 	values = append(values, username)
 	for _, field := range frm.Fields {
 		var val interface{}
 		var err error
+
+		// ldap fields first, if it's an insert
+		if field.IsLDAPPopulated && isInsert {
+			val = ldapValues[field.Name]
+			values = append(values, val)
+			continue
+		}
+
 		switch field.FieldType {
 		case FormInteger:
 			if !field.Required && req.FormValue(field.Name) == "" {

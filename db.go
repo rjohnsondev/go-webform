@@ -17,8 +17,8 @@ import (
 type DBType string
 
 const (
-	DbSqlServer = "sqlserver"
-	DbPostgres  = "postgres"
+	DbSqlServer DBType = "sqlserver"
+	DbPostgres         = "postgres"
 )
 
 type dbCol struct {
@@ -148,15 +148,15 @@ func loadField(ctx context.Context, col *dbCol, tableName string) (*FormField, e
 func loadForm(ctx context.Context, formPath string) (*Form, error) {
 	// let's get the other details for the form
 	form := new(Form)
-	query := "SELECT name, description, table_name, admins, allow_anonymous FROM forms WHERE path = $1"
+	query := "SELECT name, description, table_name, admins, allow_anonymous, use_ldap_fields FROM forms WHERE path = $1"
 	if dbType == DbSqlServer {
-		query = "SELECT name, description, table_name, admins, allow_anonymous FROM forms WHERE path = @p1"
+		query = "SELECT name, description, table_name, admins, allow_anonymous, use_ldap_fields FROM forms WHERE path = @p1"
 	}
 	admins := ""
 	err :=
 		db.
 			QueryRowContext(ctx, query, formPath).
-			Scan(&form.Name, &form.Description, &form.TableName, &admins, &form.AllowAnonymous)
+			Scan(&form.Name, &form.Description, &form.TableName, &admins, &form.AllowAnonymous, &form.UseLDAPFields)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, errors.Errorf("no form with path %s", formPath)
@@ -173,17 +173,36 @@ func loadForm(ctx context.Context, formPath string) (*Form, error) {
 		return nil, errors.Wrap(err, "query error")
 	}
 
+	if ldapConn == nil {
+		form.UseLDAPFields = false
+	}
+
 	fields := make([]*FormField, 0, len(dbCols))
 	for _, col := range dbCols {
 		field, err := loadField(ctx, col, form.TableName)
 		if err != nil {
 			return nil, err
 		}
+		field.IsLDAPPopulated = form.UseLDAPFields && isLDAPField(field.Name)
 		fields = append(fields, field)
 	}
 	form.Fields = fields
 
 	return form, nil
+}
+
+func isLDAPField(fieldName string) bool {
+	return fieldName == "user_employee_number" ||
+		fieldName == "user_display_name" ||
+		fieldName == "user_department" ||
+		fieldName == "user_email" ||
+		fieldName == "user_location" ||
+		fieldName == "manager" ||
+		fieldName == "manager_employee_number" ||
+		fieldName == "manager_display_name" ||
+		fieldName == "manager_department" ||
+		fieldName == "manager_email" ||
+		fieldName == "manager_location"
 }
 
 func loadFormList(ctx context.Context, user string, frm *Form) ([]map[string]string, error) {
@@ -352,13 +371,18 @@ func generateInsertStatement(tableName string, fields []*FormField) string {
 func generateUpdateStatement(tableName string, isAdmin bool, fields []*FormField) string {
 	fieldNames := make([]string, 0, len(fields))
 	for _, field := range fields {
-		fieldNames = append(fieldNames, field.Name)
+		// ldap fields cannot be updated.
+		if !field.IsLDAPPopulated {
+			fieldNames = append(fieldNames, field.Name)
+		}
 	}
 	query := ""
 	if dbType == DbPostgres {
 		placeholders := ""
 		for i, field := range fields {
-			placeholders = fmt.Sprintf("%s, %s = $%d", placeholders, field.Name, i+3)
+			if !field.IsLDAPPopulated {
+				placeholders = fmt.Sprintf("%s, %s = $%d", placeholders, field.Name, i+3)
+			}
 		}
 		if isAdmin {
 			query = fmt.Sprintf(
@@ -374,7 +398,9 @@ func generateUpdateStatement(tableName string, isAdmin bool, fields []*FormField
 	} else {
 		placeholders := ""
 		for i, field := range fields {
-			placeholders = fmt.Sprintf("%s, %s = @p%d", placeholders, field.Name, i+3)
+			if !field.IsLDAPPopulated {
+				placeholders = fmt.Sprintf("%s, %s = @p%d", placeholders, field.Name, i+3)
+			}
 		}
 		if isAdmin {
 			query = fmt.Sprintf(

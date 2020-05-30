@@ -8,8 +8,15 @@ import (
 
 type tomlConfig struct {
 	Server   serverConfig
+	LDAP     ldapConfig
 	Database databaseConfig
 	Auth     authConfig
+}
+
+type ldapConfig struct {
+	Host     string
+	Username string
+	Password string
 }
 
 type serverConfig struct {
